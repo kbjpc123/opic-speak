@@ -36,6 +36,8 @@ button:disabled{opacity:.5}
 @keyframes p{50%{transform:scale(1.08)}}
 .center{display:flex;flex-direction:column;align-items:center;gap:10px}
 .hide{display:none}
+.bar{height:6px;background:var(--bd);border-radius:99px;overflow:hidden;margin-bottom:10px}
+.bar i{display:block;height:100%;width:0;background:var(--ac);transition:width .3s}
 details.card summary{cursor:pointer;font-weight:600}
 details.card[open] summary{margin-bottom:10px}
 .chips{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}
@@ -89,6 +91,8 @@ input{flex:1;min-width:120px}
 
 <section id="study" class="hide">
  <div class="card">
+  <div id="prog" class="hint" style="font-weight:700;margin-bottom:6px"></div>
+  <div class="bar"><i id="barfill"></i></div>
   <span class="badge" id="badge"></span>
   <div class="hint" id="tgt"></div>
   <div class="en" id="en"></div>
@@ -101,10 +105,11 @@ input{flex:1;min-width:120px}
   <div class="row">
    <button class="sec" id="hear">🔊 다시 듣기</button>
    <button class="sec" id="reveal">정답 보기</button>
-   <button class="sec" id="skip">건너뛰기</button>
+   <button class="sec" id="skip">문장 건너뛰기</button><button class="sec" id="nextexp">다음 표현 ⏭</button>
   <button class="sec hide" id="retry">🔄 다시 시도</button>
    <button class="sec" id="stop">종료</button>
   </div>
+  <details id="plist" style="margin-top:12px"><summary class="hint" style="cursor:pointer">📋 표현 목록 (펼치면 정답이 보여요)</summary><div id="plistbox" style="margin-top:8px;max-height:260px;overflow:auto"></div></details>
  </div>
  <div class="hint" id="count" style="text-align:center"></div>
 </section>
@@ -414,7 +419,7 @@ const shuffle=a=>{a=a.slice();for(let i=a.length-1;i>0;i--){const j=Math.floor(M
 async function fetchBatch(){
  if(loading||Date.now()<failUntil)return;loading=true;
  try{
-  if(ptr>=order.length){order=shuffle(pool);ptr=0}
+  if(ptr>=order.length){order=[...shuffle(pool.filter(w=>!doneWords.has(dk(w.p)))),...shuffle(pool.filter(w=>doneWords.has(dk(w.p))))];ptr=0}
   const picked=order.slice(ptr,ptr+2);ptr+=2;
   const pick=[];
   picked.forEach(w=>{
@@ -443,7 +448,7 @@ Return ONLY a JSON array, no other text, one object per expression: {"word": exp
   if(!gs.length)throw new Error('AI 응답을 해석하지 못했어요: '+JSON.stringify(out).slice(0,150));
   gs.forEach((g,i)=>{
    const gw=String(g.word).toLowerCase();const w=pick.find(x=>x.p.toLowerCase()===gw)||pick.find(x=>gw&&(gw.includes(x.p.toLowerCase())||x.p.toLowerCase().includes(gw)))||(gs.length===pick.length?pick[i]:null);
-   if(w)cachePut(w.p,g.items);
+   if(w){g.word=w.p;cachePut(w.p,g.items)}
   });
   queue.push(...shuffle(gs));errCount=0;lastErr='';
  }catch(e){
@@ -456,13 +461,14 @@ failUntil=Date.now()+5000;$('status').textContent='문장 생성 실패: '+(e&&e
 async function nextItem(id=runId){
  if(queue.length<2)fetchBatch();
  const t0=Date.now();
- while(!queue.length){
+ while(!queue.length||(jumpWord&&!queue.some(g=>dk(g.word)===dk(jumpWord)))){
   await new Promise(r=>setTimeout(r,300));
   if(id!==runId)return null;
   if(!loading)await fetchBatch();
   if(errCount>=6)return null;
   $('status').textContent='문장을 만드는 중… '+Math.round((Date.now()-t0)/1000)+'초'+(lastErr?' (재시도 중 — '+lastErr+')':'');
  }
+ if(jumpWord){const i=queue.findIndex(g=>dk(g.word)===dk(jumpWord));jumpWord=null;if(i>0)queue.unshift(queue.splice(i,1)[0])}
  return queue.shift();
 }
 
@@ -474,6 +480,7 @@ function micWait(){return new Promise(r=>micFn=r)}
 async function until(id,ok){
  for(;;){
   if(id!==runId)return 'cancel';
+  if(skipG)return 'skip';
   const r=await race(listen(ok));
   if(r===SKIP){try{rec&&rec.abort()}catch(e){}return 'skip'}
   if(id!==runId)return 'cancel';
@@ -513,18 +520,51 @@ async function stage2(it,id,tag){
  $('en').innerHTML=hl(it.en,it.target);
  if(r==='ok'){$('status').textContent='✅ 정답!';await race(speak(it.en,'en-US'))}
 }
-let curWord='';
+let curWord='',jumpWord=null,skipG=false,doneWords=new Set(),round=1;
+const dk=w=>String(w||'').trim().toLowerCase();
+function renderPlist(){
+ const box=$('plistbox');box.innerHTML='';
+ pool.forEach((w,i)=>{
+  const b=document.createElement('button');
+  b.className='sec';b.style.cssText='display:block;width:100%;text-align:left;margin-bottom:6px;padding:8px 12px';
+  b.textContent=(i+1)+'. '+w.p+(doneWords.has(dk(w.p))?'  ✔':'')+(dk(w.p)===dk(curWord)?'  ▶':'');
+  b.onclick=()=>jump(w.p);box.append(b);
+ });
+}
+function jump(w){
+ if(!pool.length)return;
+ skipG=false;
+ const id=++runId;
+ try{rec&&rec.abort()}catch(e){}try{speechSynthesis.cancel()}catch(e){}
+ skipFn&&skipFn();
+ queue=[];jumpWord=w;
+ const target=pool.find(x=>dk(x.p)===dk(w));
+ const rest=shuffle(pool.filter(x=>x!==target&&!doneWords.has(dk(x.p))));
+ order=[target,...(rest.length?rest:shuffle(pool.filter(x=>x!==target)))];ptr=0;
+ errCount=0;lastErr='';failUntil=0;
+ $('plist').open=false;
+ loop(id);
+}
 async function runGroup(g,id){
  curWord=g.word||'';
+ const tot=Math.max(pool.length,1);
+ $('prog').textContent='표현 '+Math.min(doneWords.size+1,tot)+' / '+tot+(round>1?' · '+round+'회차':'');
+ $('barfill').style.width=(doneWords.size/tot*100)+'%';
+ renderPlist();
  const n=g.items.length;
- for(let i=0;i<n;i++){if(id!==runId)return;await stage1(g.items[i],id,`(${i+1}/${n})`)}
+ for(let i=0;i<n&&!skipG;i++){if(id!==runId)return;await stage1(g.items[i],id,`(${i+1}/${n})`)}
  if(id!==runId)return;
+ if(skipG){skipG=false;return}
  $('badge').textContent='잠시 후 빈칸 채우기';$('tgt').textContent='';$('en').textContent='';$('ko').textContent='';
  $('status').textContent='이제 방금 들은 문장들을 빈칸으로 연습해요';
  await race(new Promise(r=>setTimeout(r,1500)));
- for(let i=0;i<n;i++){if(id!==runId)return;await stage2(g.items[i],id,`(${i+1}/${n})`)}
+ for(let i=0;i<n&&!skipG;i++){if(id!==runId)return;await stage2(g.items[i],id,`(${i+1}/${n})`)}
  if(id!==runId)return;
- done++;$('count').textContent=`이번 세션 ${done}개 표현 완료`;
+ if(skipG){skipG=false;return}
+ done++;doneWords.add(dk(g.word));
+ if(doneWords.size>=tot){$('barfill').style.width='100%';doneWords=new Set();round++}else $('barfill').style.width=(doneWords.size/tot*100)+'%';
+ renderPlist();
+ $('count').textContent=`이번 세션 ${done}개 표현 완료`;
 }
 
 async function loop(id){
@@ -544,8 +584,9 @@ $('start').onclick=async()=>{
  const sc=$('scope').value;pool=sc==='all'?words.slice():words.filter(w=>w.c===sc);
  if(!pool.length){$('env').textContent='선택한 범위에 표현이 없어요. 먼저 추가해주세요.';return}
  if(!cfgOk()&&(cfg.forceNew||pool.some(w=>!cacheGet(w.p).length))){$('env').textContent='먼저 "AI 설정"에서 모델과 API 키를 저장해주세요.';$('aiBox').open=true;return}
+ doneWords=new Set();round=1;jumpWord=null;skipG=false;curWord='';
  await loadCache();queue=[];order=shuffle(pool);ptr=0;done=0;$('count').textContent='';
- $('setup').classList.add('hide');$('study').classList.remove('hide');
+ $('setup').classList.add('hide');$('study').classList.remove('hide');renderPlist();
  const id=++runId;
  try{speechSynthesis.getVoices();speechSynthesis.speak(new SpeechSynthesisUtterance(''))}catch(e){}
  loop(id);
@@ -560,6 +601,7 @@ const submitTyped=()=>{
 };
 $('go').onclick=submitTyped;
 $('ans').onkeydown=e=>{if(e.key==='Enter')submitTyped()};
+$('nextexp').onclick=()=>{skipG=true;try{rec&&rec.abort()}catch(e){}try{speechSynthesis.cancel()}catch(e){}skipFn&&skipFn()};
 $('skip').onclick=()=>{try{rec&&rec.abort()}catch(e){}try{speechSynthesis.cancel()}catch(e){}skipFn&&skipFn()};
 $('hear').onclick=()=>cur&&speak(cur.en,'en-US');
 $('reveal').onclick=()=>{if(cur)$('en').innerHTML=hl(cur.en,cur.target)};
