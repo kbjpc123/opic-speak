@@ -36,6 +36,10 @@ button:disabled{opacity:.5}
 @keyframes p{50%{transform:scale(1.08)}}
 .center{display:flex;flex-direction:column;align-items:center;gap:10px}
 .hide{display:none}
+.sw{color:var(--mu);transition:color .15s}
+.sw.on{color:var(--tx)}
+.sw.t{color:var(--hl);opacity:.5;font-weight:800}
+.sw.t.on{opacity:1}
 .bar{height:6px;background:var(--bd);border-radius:99px;overflow:hidden;margin-bottom:10px}
 .bar i{display:block;height:100%;width:0;background:var(--ac);transition:width .3s}
 details.card summary{cursor:pointer;font-weight:600}
@@ -205,12 +209,12 @@ function speak(text,lang){
  });
 }
 let rec=null,typedFn=null,stopFn=null;
-function listen(ok){
+function listen(ok,onText){
  return new Promise(res=>{
   if(!SR){res({err:'unsupported'});return}
   const T0=Date.now(),FIRST=12000,SILENCE=4000;
-  let final='',interim='',done=false,lastAt=0,stopping=false,restarts=0;
-  const fin=r=>{if(!done){done=true;clearInterval(tm);typedFn=null;stopFn=null;$('mic').classList.remove('on');res(r)}};
+  let final='',finalTop='',interim='',done=false,lastAt=0,stopping=false,restarts=0;
+  const fin=r=>{if(!done){done=true;clearInterval(tm);typedFn=null;stopFn=null;if(onText&&onText.commit)onText.commit();$('mic').classList.remove('on');res(r)}};
   const heard=()=>final.split(' | ').filter(Boolean);
   const mk=()=>{
    rec=new SR();rec.lang='en-US';rec.interimResults=true;rec.continuous=true;rec.maxAlternatives=3;
@@ -218,10 +222,11 @@ function listen(ok){
     interim='';
     for(let i=e.resultIndex;i<e.results.length;i++){
      const r=e.results[i];
-     if(r.isFinal){final+=Array.from(r).map(a=>a.transcript).join(' | ')+' | '}else interim+=r[0].transcript;
+     if(r.isFinal){final+=Array.from(r).map(a=>a.transcript).join(' | ')+' | ';finalTop+=r[0].transcript+' '}else interim+=r[0].transcript;
     }
     lastAt=Date.now();
-    $('status').textContent='🎧 '+(interim||heard()[0]||'');
+    if(!onText)$('status').textContent='🎧 '+(interim||heard()[0]||'');
+    if(onText&&onText((finalTop+' '+interim).trim())){stopping=true;try{rec.abort()}catch(x){}fin({text:final,done:true});return}
     if(ok&&heard().some(ok)){stopping=true;try{rec.abort()}catch(x){}fin({text:final})}
    };
    rec.onerror=e=>{
@@ -241,7 +246,7 @@ function listen(ok){
    const now=Date.now();
    if(lastAt?now-lastAt>SILENCE:now-T0>FIRST){stopping=true;try{rec.stop()}catch(x){fin({text:final||interim})}}
   },300);
-  typedFn=t=>{stopping=true;try{rec.abort()}catch(e){}fin({text:t})};
+  typedFn=t=>{stopping=true;try{rec.abort()}catch(e){}fin({text:t,typed:true})};
   stopFn=()=>{stopping=true;try{rec.stop()}catch(e){fin({text:final||interim})}};
   try{mk();rec.start();$('mic').classList.add('on');$('status').textContent='말씀하세요…'}catch(e){fin({err:'start'})}
  });
@@ -477,11 +482,11 @@ const SKIP={};
 const race=p=>Promise.race([p,new Promise(r=>skipFn=()=>r(SKIP))]);
 function micWait(){return new Promise(r=>micFn=r)}
 
-async function until(id,ok){
+async function until(id,ok,onText){
  for(;;){
   if(id!==runId)return 'cancel';
   if(skipG)return 'skip';
-  const r=await race(listen(ok));
+  const r=await race(listen(onText?null:ok,onText));
   if(r===SKIP){try{rec&&rec.abort()}catch(e){}return 'skip'}
   if(id!==runId)return 'cancel';
   if(r.err&&r.err!=='no-speech'&&r.err!=='aborted'){
@@ -490,6 +495,11 @@ async function until(id,ok){
    const x=await race(micWait());if(x===SKIP)return 'skip';
    if(x&&x.text&&ok(x.text))return 'ok';continue;
   }
+  if(onText&&!r.typed){
+   if(r.done)return 'ok';
+   $('status').textContent='회색 단어를 이어서 말해주세요 (어려우면 문장 건너뛰기)';
+   await race(new Promise(r=>setTimeout(r,400)));continue;
+  }
   const heard=(r.text||'').split(' | ').filter(Boolean);
   if(heard.some(h=>ok(h)))return 'ok';
   $('status').textContent=heard.length?`들린 말: “${heard[0]}” — 다시 말해보세요`:'소리가 안 들렸어요. 다시 말해보세요';
@@ -497,29 +507,63 @@ async function until(id,ok){
  }
 }
 
+function tracker(it,blank){
+ const toks=[],re=/\S+/g;let m;
+ while((m=re.exec(it.en)))toks.push({t:m[0],s:m.index,e:m.index+m[0].length});
+ const ti=it.en.indexOf(it.target),te=ti+it.target.length;
+ toks.forEach(k=>{k.key=norm(k.t).join('');k.tg=ti>=0&&k.s<te&&k.e>ti});
+ const tg=toks.map((k,i)=>k.tg?i:-1).filter(i=>i>=0);
+ let base=new Set(),lastCur=new Set();
+ const paint=set=>{
+  const tgDone=tg.every(i=>set.has(i));
+  $('en').innerHTML=toks.map((k,i)=>{
+   if(blank&&k.tg&&!tgDone)return i===tg[0]?'<span class="blank">_____</span>':'';
+   return '<span class="sw'+(k.tg?' t':'')+(set.has(i)?' on':'')+'">'+hesc(k.t)+'</span>';
+  }).filter(Boolean).join(' ');
+ };
+ const onText=text=>{
+  const c2=new Set(base);
+  for(const h of norm(text)){
+   let j=-1;
+   if(blank)j=toks.findIndex((k,i)=>k.tg&&!c2.has(i)&&k.key&&h===k.key);
+   if(j<0)j=toks.findIndex((k,i)=>!c2.has(i)&&k.key&&!(blank&&k.tg)&&same(h,k.key));
+   if(j>=0)c2.add(j);
+  }
+  lastCur=c2;paint(c2);
+  return toks.every((k,i)=>c2.has(i)||!k.key);
+ };
+ onText.commit=()=>{base=new Set(lastCur)};
+ return {toks,paint,onText,all:()=>new Set(toks.map((k,i)=>i))};
+}
 async function stage1(it,id,tag){
  cur=it;
  $('tgt').textContent='표현: '+(it.word||curWord);
  $('badge').textContent='1단계 · 듣고 따라 말하기 '+tag;
- $('en').innerHTML=hl(it.en,it.target);$('ko').textContent=it.ko;$('status').textContent='';
+ $('ko').textContent=it.ko;$('status').textContent='';
+ const T=tracker(it,false);
+ T.paint(new Set());
  await race(speak(it.en,'en-US'));
- const r=await until(id,h=>similar(h,it.en));
+ if(skipG)return;
+ const r=await until(id,h=>similar(h,it.en),T.onText);
  if(r==='cancel')return;
- if(r==='ok'){$('status').textContent='✅ 좋아요!';await race(new Promise(r=>setTimeout(r,700)))}
+ if(r==='ok'){T.paint(T.all());$('status').textContent='✅ 좋아요!';await race(new Promise(r=>setTimeout(r,700)))}
 }
 async function stage2(it,id,tag){
  cur=it;
  $('tgt').textContent='';
  if(id!==runId)return;
  $('badge').textContent='2단계 · 빈칸 채워 말하기 '+tag;
- const bi=it.en.indexOf(it.target);const blanked=hesc(it.en.slice(0,bi))+'<span class="blank">_____</span>'+hesc(it.en.slice(bi+it.target.length));
- $('en').innerHTML=blanked;$('ko').textContent=it.ko;$('status').textContent='';
+ const T=tracker(it,true);
+ $('ko').textContent=it.ko;$('status').textContent='';
+ T.paint(new Set());
  await race(speak(it.ko,'ko-KR'));
- const r=await until(id,h=>hasAll(h,it.target));
+ if(skipG)return;
+ const r=await until(id,h=>hasAll(h,it.target),T.onText);
  if(r==='cancel')return;
- $('en').innerHTML=hl(it.en,it.target);
- if(r==='ok'){$('status').textContent='✅ 정답!';await race(speak(it.en,'en-US'))}
+ if(r==='ok'){T.paint(T.all());$('status').textContent='✅ 정답!';await race(speak(it.en,'en-US'))}
+ else $('en').innerHTML=hl(it.en,it.target);
 }
+
 let curWord='',jumpWord=null,skipG=false,doneWords=new Set(),round=1;
 const dk=w=>String(w||'').trim().toLowerCase();
 function renderPlist(){
