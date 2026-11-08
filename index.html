@@ -38,8 +38,9 @@ button:disabled{opacity:.5}
 .hide{display:none}
 .sw{color:var(--mu);transition:color .15s}
 .sw.on{color:var(--tx)}
-.sw.t{color:var(--hl);opacity:.5;font-weight:800}
-.sw.t.on{opacity:1}
+.sw.t{color:#5bc8f5;font-weight:800}
+.sw.t.on{color:#0284c7}
+@media (prefers-color-scheme:dark){.sw.t{color:#7dd3fc}.sw.t.on{color:#0ea5e9}}
 .bar{height:6px;background:var(--bd);border-radius:99px;overflow:hidden;margin-bottom:10px}
 .bar i{display:block;height:100%;width:0;background:var(--ac);transition:width .3s}
 details.card summary{cursor:pointer;font-weight:600}
@@ -287,7 +288,7 @@ const loadScript=src=>new Promise((res,rej)=>{const t=document.createElement('sc
 const genCode=()=>Array.from(crypto.getRandomValues(new Uint8Array(24)),x=>(x%36).toString(36)).join('');
 function push(){
  if(!docRef)return;
- docRef.set({cats,words,rev,sc:JSON.stringify(sc)}).then(()=>{$('sync').textContent='☁️ 동기화됨'}).catch(e=>{$('sync').textContent='동기화 실패: '+(e.code||e.message)});
+ docRef.set({cats,words,rev,sc:JSON.stringify(sc),prog:JSON.stringify(progMap)}).then(()=>{$('sync').textContent='☁️ 동기화됨'}).catch(e=>{$('sync').textContent='동기화 실패: '+(e.code||e.message)});
 }
 async function connect(){
  if(!sync)return;
@@ -306,6 +307,10 @@ async function connect(){
    const r=JSON.parse(JSON.stringify(snap.data()));
    let rc=r.cats||[],rw=r.words||[],rr=r.rev||0,changed=false,adopt=false,remoteSc={};
    try{remoteSc=JSON.parse(r.sc||'{}')}catch(e){}
+   let remoteProg={};try{remoteProg=JSON.parse(r.prog||'{}')}catch(e){}
+   const progMore=Object.keys(progMap).some(k=>!remoteProg[k]||remoteProg[k].t<progMap[k].t);
+   let pch=false;Object.entries(remoteProg).forEach(([k,v])=>{if(!progMap[k]||v.t>progMap[k].t){progMap[k]=v;pch=true}});
+   if(pch)try{localStorage.setItem('opic_prog',JSON.stringify(progMap))}catch(e){}
    const localMore=Object.keys(sc).some(k=>!remoteSc[k]||newer(remoteSc[k],sc[k]));
    let sch=false;
    Object.entries(remoteSc).forEach(([k,v])=>{if(newer(sc[k],v)){sc[k]=v;sch=true}});
@@ -319,7 +324,7 @@ async function connect(){
    if(adopt)try{localStorage.setItem('opic_store',JSON.stringify({cats,words,rev}))}catch(e){}
    docRef=fbDoc;
    $('sync').textContent='☁️ 동기화됨';
-   if(changed)save();else if(localMore)push();
+   if(changed)save();else if(localMore||progMore)push();
   },err=>{$('sync').textContent='동기화 오류: '+(err.code||err.message)});
  }catch(e){$('sync').textContent='연결 실패: '+e.message}
 }
@@ -564,6 +569,12 @@ async function stage2(it,id,tag){
  else $('en').innerHTML=hl(it.en,it.target);
 }
 
+let progMap={};
+try{const o=JSON.parse(localStorage.getItem('opic_prog')||'{}');if(Array.isArray(o))o.forEach(k=>{progMap[k]={t:Date.now(),d:1}});else progMap=o||{}}catch(e){}
+const pHas=k=>!!(progMap[k]&&progMap[k].d);
+const pAdd=k=>{progMap[k]={t:Date.now(),d:1}};
+const pDel=k=>{if(progMap[k])progMap[k]={t:Date.now(),d:0}};
+const saveProg=()=>{try{localStorage.setItem('opic_prog',JSON.stringify(progMap))}catch(e){}if(docRef)push()};
 let curWord='',jumpWord=null,skipG=false,doneWords=new Set(),round=1;
 const dk=w=>String(w||'').trim().toLowerCase();
 function renderPlist(){
@@ -605,8 +616,8 @@ async function runGroup(g,id){
  for(let i=0;i<n&&!skipG;i++){if(id!==runId)return;await stage2(g.items[i],id,`(${i+1}/${n})`)}
  if(id!==runId)return;
  if(skipG){skipG=false;return}
- done++;doneWords.add(dk(g.word));
- if(doneWords.size>=tot){$('barfill').style.width='100%';doneWords=new Set();round++}else $('barfill').style.width=(doneWords.size/tot*100)+'%';
+ done++;doneWords.add(dk(g.word));pAdd(dk(g.word));saveProg();
+ if(doneWords.size>=tot){$('barfill').style.width='100%';pool.forEach(w=>pDel(dk(w.p)));saveProg();doneWords=new Set();round++}else $('barfill').style.width=(doneWords.size/tot*100)+'%';
  renderPlist();
  $('count').textContent=`이번 세션 ${done}개 표현 완료`;
 }
@@ -628,8 +639,13 @@ $('start').onclick=async()=>{
  const sc=$('scope').value;pool=sc==='all'?words.slice():words.filter(w=>w.c===sc);
  if(!pool.length){$('env').textContent='선택한 범위에 표현이 없어요. 먼저 추가해주세요.';return}
  if(!cfgOk()&&(cfg.forceNew||pool.some(w=>!cacheGet(w.p).length))){$('env').textContent='먼저 "AI 설정"에서 모델과 API 키를 저장해주세요.';$('aiBox').open=true;return}
- doneWords=new Set();round=1;jumpWord=null;skipG=false;curWord='';
- await loadCache();queue=[];order=shuffle(pool);ptr=0;done=0;$('count').textContent='';
+ round=1;jumpWord=null;skipG=false;curWord='';
+ doneWords=new Set(pool.map(w=>dk(w.p)).filter(k=>pHas(k)));
+ let resetMsg='';
+ if(doneWords.size>=pool.length){pool.forEach(w=>pDel(dk(w.p)));saveProg();doneWords=new Set();resetMsg='모든 표현을 연습해서 처음부터 다시 시작해요.'}
+ await loadCache();queue=[];
+ order=[...shuffle(pool.filter(w=>!doneWords.has(dk(w.p)))),...shuffle(pool.filter(w=>doneWords.has(dk(w.p))))];
+ ptr=0;done=0;$('count').textContent=resetMsg||(doneWords.size?'이전에 연습한 '+doneWords.size+'개는 뒤로 미루고, 안 한 표현부터 해요':'');
  $('setup').classList.add('hide');$('study').classList.remove('hide');renderPlist();
  const id=++runId;
  try{speechSynthesis.getVoices();speechSynthesis.speak(new SpeechSynthesisUtterance(''))}catch(e){}
