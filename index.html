@@ -502,7 +502,7 @@ async function stage1(it,id,tag){
 }
 async function stage2(it,id,tag){
  cur=it;
- $('tgt').textContent='표현: '+(it.word||curWord);
+ $('tgt').textContent='';
  if(id!==runId)return;
  $('badge').textContent='2단계 · 빈칸 채워 말하기 '+tag;
  const bi=it.en.indexOf(it.target);const blanked=hesc(it.en.slice(0,bi))+'<span class="blank">_____</span>'+hesc(it.en.slice(bi+it.target.length));
@@ -519,7 +519,7 @@ async function runGroup(g,id){
  const n=g.items.length;
  for(let i=0;i<n;i++){if(id!==runId)return;await stage1(g.items[i],id,`(${i+1}/${n})`)}
  if(id!==runId)return;
- $('badge').textContent='잠시 후 빈칸 채우기';$('tgt').textContent='표현: '+g.word;$('en').textContent='';$('ko').textContent='';
+ $('badge').textContent='잠시 후 빈칸 채우기';$('tgt').textContent='';$('en').textContent='';$('ko').textContent='';
  $('status').textContent='이제 방금 들은 문장들을 빈칸으로 연습해요';
  await race(new Promise(r=>setTimeout(r,1500)));
  for(let i=0;i<n;i++){if(id!==runId)return;await stage2(g.items[i],id,`(${i+1}/${n})`)}
