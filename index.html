@@ -82,6 +82,8 @@ input{flex:1;min-width:120px}
   <div class="row" id="baseRow"><input id="base" placeholder="http://localhost:11434/v1"></div>
   <div class="row"><label class="hint"><input type="checkbox" id="forcenew" style="flex:none;min-width:0"> 저장된 문장을 무시하고 AI로 새로 만들기</label></div>
   <div class="hint">끄면: 저장된 문장이 있는 표현은 그걸 쓰고, 없는 표현만 AI로 만들어 저장해요. 켜면: 모든 표현을 새로 만들고 저장해요.</div>
+  <div class="row"><label class="hint">인식 관대함 <select id="lenient"><option value="0">엄격</option><option value="1">보통</option><option value="2">관대</option></select></label></div>
+  <div class="hint">엄격: 같은 단어만 인정 · 보통: 비슷한 발음(한 글자 차이)과 a, the, we 같은 짧은 단어 누락을 인정 · 관대: 더 비슷한 발음도 인정, 긴 문장은 한 단어 빠져도 완료 (연습 표현은 항상 필요)</div>
   <div class="row"><label class="hint"><input type="checkbox" id="beepchk" style="flex:none;min-width:0"> 마이크가 켜질 때 알림음 (소리가 나면 말하기 시작)</label></div>
   <div class="hint" id="stored"></div>
   <div class="row"><button class="sec" id="cfgsave">저장</button><button class="sec" id="modelload">모델 자동 선택 (Gemini)</button><span class="hint" id="cfgmsg"></span></div>
@@ -261,7 +263,7 @@ function listen(ok,onText){
  return new Promise(res=>{
   if(!SR){res({err:'unsupported'});return}
   const T0=Date.now(),FIRST=12000,SILENCE=4000;
-  let final='',finalTop='',interim='',done=false,lastAt=0,stopping=false,restarts=0;
+  let final='',finalTop='',finalAlt='',interim='',done=false,lastAt=0,stopping=false,restarts=0;
   const fin=r=>{if(!done){done=true;clearInterval(tm);typedFn=null;stopFn=null;if(onText&&onText.commit)onText.commit();$('mic').classList.remove('on');res(r)}};
   const heard=()=>final.split(' | ').filter(Boolean);
   let beeped=false;
@@ -272,11 +274,11 @@ function listen(ok,onText){
     interim='';
     for(let i=e.resultIndex;i<e.results.length;i++){
      const r=e.results[i];
-     if(r.isFinal){final+=Array.from(r).map(a=>a.transcript).join(' | ')+' | ';finalTop+=r[0].transcript+' '}else interim+=r[0].transcript;
+     if(r.isFinal){final+=Array.from(r).map(a=>a.transcript).join(' | ')+' | ';finalTop+=r[0].transcript+' ';finalAlt+=Array.from(r).slice(1).map(a=>a.transcript).join(' ')+' '}else interim+=r[0].transcript;
     }
     lastAt=Date.now();
     if(!onText)$('status').textContent='🎧 '+(interim||heard()[0]||'');
-    if(onText&&onText((finalTop+' '+interim).trim())){stopping=true;try{rec.abort()}catch(x){}fin({text:final,done:true});return}
+    if(onText&&onText((finalTop+' '+interim).trim(),finalAlt)){stopping=true;try{rec.abort()}catch(x){}fin({text:final,done:true});return}
     if(ok&&heard().some(ok)){stopping=true;try{rec.abort()}catch(x){}fin({text:final})}
    };
    rec.onerror=e=>{
@@ -317,7 +319,23 @@ const norm=s=>mergeNums(String(s).toLowerCase().replace(/[\u2018\u2019\u02bc`\u0
 const EXP={im:['i','am'],ive:['i','have'],youre:['you','are'],theyre:['they','are'],dont:['do','not'],doesnt:['does','not'],didnt:['did','not'],isnt:['is','not'],arent:['are','not'],wasnt:['was','not'],werent:['were','not'],cant:['can','not'],cannot:['can','not'],wont:['will','not'],wouldnt:['would','not'],couldnt:['could','not'],shouldnt:['should','not'],havent:['have','not'],hasnt:['has','not'],thats:['that','is'],whats:['what','is'],hes:['he','is'],shes:['she','is'],theres:['there','is']};
 const CON={};for(const k in EXP)if(k!=='cannot')CON[EXP[k].join(' ')]=k;
 const expandHeard=ws=>{const out=[];for(let i=0;i<ws.length;i++){const w=ws[i];out.push(w);if(EXP[w])out.push(...EXP[w]);const p=CON[w+' '+ws[i+1]];if(p)out.push(p)}return out};
-const same=(a,b)=>a===b||(a.length>3&&b.length>3&&(a.startsWith(b.slice(0,-2))||b.startsWith(a.slice(0,-2))));
+const sameBase=(a,b)=>a===b||(a.length>3&&b.length>3&&(a.startsWith(b.slice(0,-2))||b.startsWith(a.slice(0,-2))));
+function lev(a,b){
+ if(Math.abs(a.length-b.length)>2)return 9;
+ let p=Array.from({length:b.length+1},(_,j)=>j);
+ for(let i=1;i<=a.length;i++){const c=[i];for(let j=1;j<=b.length;j++)c[j]=Math.min(p[j]+1,c[j-1]+1,p[j-1]+(a[i-1]===b[j-1]?0:1));p=c}
+ return p[b.length];
+}
+const lvl=()=>{try{return cfg.lenient==null?1:cfg.lenient}catch(e){return 1}};
+const fuzzy=(a,b)=>{
+ if(/\d/.test(a)||/\d/.test(b))return false;
+ const L=lvl();if(L<1)return false;
+ const m=Math.min(a.length,b.length);
+ if(m>=3&&lev(a,b)<=1)return true;
+ return L>=2&&m>=6&&lev(a,b)<=2;
+};
+const same=(a,b)=>sameBase(a,b)||fuzzy(a,b);
+const WEAK=new Set('a an the to of in on at is it its i we he she you they my your his her our their and or for as by be was am are but so if do up us me'.split(' '));
 const hasAll=(heard,target)=>{const h=norm(heard),t=norm(target);return t.every(x=>h.some(y=>same(x,y)))};
 const similar=(heard,full)=>{const h=norm(heard),f=norm(full);return f.filter(x=>h.some(y=>same(x,y))).length/f.length>=0.6};
 
@@ -421,12 +439,13 @@ showSync();connect();
 let cfg={provider:'gemini',key:'',model:'gemini-flash-latest',base:'http://localhost:11434/v1'};
 try{Object.assign(cfg,JSON.parse(localStorage.getItem('opic_cfg')||'{}'))}catch(e){}
 const MODELS={gemini:'gemini-flash-latest',anthropic:'claude-haiku-5-5',openai:'llama3.1'};
-function cfgUI(){$('forcenew').checked=!!cfg.forceNew;$('beepchk').checked=cfg.beep!==false;updateStored();$('prov').value=cfg.provider;$('key').value=cfg.key;$('model').value=cfg.model;$('base').value=cfg.base;$('baseRow').classList.toggle('hide',cfg.provider!=='openai')}
+function cfgUI(){$('lenient').value=String(cfg.lenient==null?1:cfg.lenient);$('forcenew').checked=!!cfg.forceNew;$('beepchk').checked=cfg.beep!==false;updateStored();$('prov').value=cfg.provider;$('key').value=cfg.key;$('model').value=cfg.model;$('base').value=cfg.base;$('baseRow').classList.toggle('hide',cfg.provider!=='openai')}
 $('prov').onchange=()=>{cfg.provider=$('prov').value;cfg.model=MODELS[cfg.provider];cfgUI()};
-$('cfgsave').onclick=()=>{cfg.key=$('key').value.trim();cfg.model=$('model').value.trim();cfg.base=$('base').value.trim();cfg.forceNew=$('forcenew').checked;cfg.beep=$('beepchk').checked;try{localStorage.setItem('opic_cfg',JSON.stringify(cfg))}catch(e){}$('cfgmsg').textContent='저장했어요.'};
+$('cfgsave').onclick=()=>{cfg.key=$('key').value.trim();cfg.model=$('model').value.trim();cfg.base=$('base').value.trim();cfg.forceNew=$('forcenew').checked;cfg.beep=$('beepchk').checked;cfg.lenient=+$('lenient').value;try{localStorage.setItem('opic_cfg',JSON.stringify(cfg))}catch(e){}$('cfgmsg').textContent='저장했어요.'};
 const cfgOk=()=>(cfg.provider==='openai'?!!(cfg.base&&cfg.model):!!(cfg.key&&cfg.model));
 cfgUI();
 $('forcenew').onchange=()=>{cfg.forceNew=$('forcenew').checked;try{localStorage.setItem('opic_cfg',JSON.stringify(cfg))}catch(e){}};
+$('lenient').onchange=()=>{cfg.lenient=+$('lenient').value;try{localStorage.setItem('opic_cfg',JSON.stringify(cfg))}catch(e){}};
 $('beepchk').onchange=()=>{cfg.beep=$('beepchk').checked;try{localStorage.setItem('opic_cfg',JSON.stringify(cfg))}catch(e){}};
 async function geminiCall(model,prompt){
  const r=await ft('https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(model)+':generateContent?key='+encodeURIComponent(cfg.key),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{responseMimeType:'application/json'}})});
@@ -599,18 +618,27 @@ function tracker(it,blank){
    return '<span class="sw'+(k.tg?' t':'')+(tokOn(set,k)?' on':'')+'">'+hesc(k.t)+'</span>';
   }).filter(Boolean).join(' ');
  };
- const onText=text=>{
+ units.forEach(u=>{u.weak=!u.tg&&WEAK.has(u.key)});
+ toks.forEach(k=>{k.weak=!k.tg&&k.u.length>0&&k.u.every(x=>units[x].weak)});
+ const onText=(text,alts)=>{
   const c2=new Set(base);
   const hw=expandHeard(norm(text));
-  for(const h of hw){
+  const ha=(alts&&lvl()>=1)?expandHeard(norm(alts)).filter(w=>!hw.includes(w)):[];
+  for(const h of hw.concat(ha)){
    let j=-1;
-   if(blank)j=units.findIndex((u,x)=>u.tg&&!c2.has(x)&&h===u.key);
+   if(blank)j=units.findIndex((u,x)=>u.tg&&!c2.has(x)&&(h===u.key||(lvl()>=2&&u.key.length>=5&&!/\d/.test(u.key)&&lev(h,u.key)<=1)));
    if(j<0)j=units.findIndex((u,x)=>!c2.has(x)&&!(blank&&u.tg)&&same(h,u.key));
    if(j>=0)c2.add(j);
   }
   toks.forEach(k=>{if(k.u.length>1&&hw.includes(k.u.map(x=>units[x].key).join('')))k.u.forEach(x=>c2.add(x))});
+  if(lvl()>=1)toks.forEach((k,i)=>{
+   if(!k.weak||tokOn(c2,k))return;
+   if([toks[i-1],toks[i+1]].some(n=>n&&!n.weak&&n.u.length&&tokOn(c2,n)))k.u.forEach(x=>c2.add(x));
+  });
   lastCur=c2;paint(c2);
-  return units.every((u,x)=>c2.has(x));
+  const miss=units.filter((u,x)=>!c2.has(x));
+  if(!miss.length)return true;
+  return lvl()>=2&&units.length>=8&&miss.length<=Math.floor(units.length/8)&&miss.every(u=>!u.tg);
  };
  onText.commit=()=>{base=new Set(lastCur)};
  return {toks,paint,onText,all:()=>new Set(units.map((u,x)=>x))};
@@ -665,7 +693,7 @@ const pHas=k=>!!(progMap[k]&&progMap[k].d);
 const pAdd=k=>{progMap[k]={t:Date.now(),d:1}};
 const pDel=k=>{if(progMap[k])progMap[k]={t:Date.now(),d:0}};
 const saveProg=()=>{try{localStorage.setItem('opic_prog',JSON.stringify(progMap))}catch(e){}if(docRef)push()};
-let paused=false,resumeFn=null,knownFlag=false,inGroup=false,studying=false,wl=null;
+let skipUsed=false,paused=false,resumeFn=null,knownFlag=false,inGroup=false,studying=false,wl=null;
 function resetPause(){paused=false;resumeFn=null;try{$('mic').textContent='🎙️';$('mic').classList.remove('paused')}catch(e){}}
 async function wakeOn(){try{if(typeof navigator!=='undefined'&&navigator.wakeLock&&!wl){wl=await navigator.wakeLock.request('screen');wl.addEventListener('release',()=>{wl=null})}}catch(e){wl=null}}
 function wakeOff(){try{wl&&wl.release()}catch(e){}wl=null}
@@ -706,6 +734,7 @@ function renderPlist(){
 }
 function jump(w){
  if(!pool.length)return;
+ if(inGroup&&skipUsed&&curWord)markDone(curWord,false);
  skipG=false;resetPause();
  const id=++runId;
  try{rec&&rec.abort()}catch(e){}try{speechSynthesis.cancel()}catch(e){}
@@ -723,7 +752,7 @@ async function runGroup(g,id){
  try{await runGroup0(g,id)}finally{inGroup=false}
 }
 async function runGroup0(g,id){
- curWord=g.word||'';
+ curWord=g.word||'';skipUsed=false;
  const endSkip=()=>{skipG=false;if(knownFlag){knownFlag=false;markDone(g.word,false)}};
  updProg();
  renderPlist();
@@ -784,11 +813,12 @@ const submitTyped=()=>{
 $('go').onclick=submitTyped;
 $('ans').onkeydown=e=>{if(e.key==='Enter')submitTyped()};
 $('known').onclick=()=>{if(!inGroup)return;resetPause();knownFlag=true;skipG=true;try{rec&&rec.abort()}catch(e){}try{speechSynthesis.cancel()}catch(e){}skipFn&&skipFn()};
-$('nextexp').onclick=()=>{if(!inGroup)return;resetPause();skipG=true;try{rec&&rec.abort()}catch(e){}try{speechSynthesis.cancel()}catch(e){}skipFn&&skipFn()};
-$('skip').onclick=()=>{resetPause();try{rec&&rec.abort()}catch(e){}try{speechSynthesis.cancel()}catch(e){}skipFn&&skipFn()};
+$('nextexp').onclick=()=>{if(!inGroup)return;resetPause();knownFlag=true;skipUsed=true;skipG=true;try{rec&&rec.abort()}catch(e){}try{speechSynthesis.cancel()}catch(e){}skipFn&&skipFn()};
+$('skip').onclick=()=>{resetPause();skipUsed=true;try{rec&&rec.abort()}catch(e){}try{speechSynthesis.cancel()}catch(e){}skipFn&&skipFn()};
 $('hear').onclick=()=>cur&&speak(cur.en,'en-US');
 $('reveal').onclick=()=>{if(cur)$('en').innerHTML=hl(cur.en,cur.target)};
 $('stop').onclick=()=>{
+ if(inGroup&&skipUsed&&curWord)markDone(curWord,false);
  runId++;try{rec&&rec.abort()}catch(e){}try{speechSynthesis.cancel()}catch(e){}
  skipFn&&skipFn();
  $('study').classList.add('hide');$('setup').classList.remove('hide');
