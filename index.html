@@ -74,6 +74,8 @@ input{flex:1;min-width:120px}
   <div class="hint" id="env" style="margin-top:8px"></div>
   <div class="hint" id="sync">이 기기에 저장 중</div>
   <div class="row"><button id="start" style="flex:1">학습 시작</button></div>
+  <div class="row"><button class="sec" id="pregen" style="flex:1">📝 문장 미리 만들기 (저장된 문장이 없는 표현만)</button></div>
+  <div class="hint" id="genmsg"></div>
  </div>
  <details class="card" id="aiBox"><summary>⚙️ AI 설정</summary>
   <p class="hint">예문 생성에 쓸 AI를 고르세요. 키는 이 기기의 브라우저에만 저장돼요.</p>
@@ -84,6 +86,7 @@ input{flex:1;min-width:120px}
   <div class="hint">끄면: 저장된 문장이 있는 표현은 그걸 쓰고, 없는 표현만 AI로 만들어 저장해요. 켜면: 모든 표현을 새로 만들고 저장해요.</div>
   <div class="row"><label class="hint">인식 관대함 <select id="lenient"><option value="0">엄격</option><option value="1">보통</option><option value="2">관대</option></select></label></div>
   <div class="hint">엄격: 같은 단어만 인정 · 보통: 비슷한 발음(한 글자 차이)과 a, the, we 같은 짧은 단어 누락을 인정 · 관대: 더 비슷한 발음도 인정, 긴 문장은 한 단어 빠져도 완료 (연습 표현은 항상 필요)</div>
+  <div class="row"><label class="hint"><input type="checkbox" id="autogenchk" style="flex:none;min-width:0"> 표현을 추가하면 예문 자동으로 만들기</label></div>
   <div class="row"><label class="hint"><input type="checkbox" id="beepchk" style="flex:none;min-width:0"> 마이크가 켜질 때 알림음 (소리가 나면 말하기 시작)</label></div>
   <div class="hint" id="stored"></div>
   <div class="row"><button class="sec" id="cfgsave">저장</button><button class="sec" id="modelload">모델 자동 선택 (Gemini)</button><span class="hint" id="cfgmsg"></span></div>
@@ -184,17 +187,17 @@ function render(){
 }
 
 $('add').onclick=()=>{
- let n=0;const dup=[];
+ let n=0;const dup=[],added=[];
  $('inp').value.split('\n').map(l=>l.trim()).filter(Boolean).forEach(l=>{
   const k=l.search(/[|｜]/);
   const p=(k<0?l:l.slice(0,k)).trim(),m=k<0?'':l.slice(k+1).trim();
   if(!p)return;
   if(words.some(w=>(w.p||'').toLowerCase()===p.toLowerCase()))dup.push(p);
-  else{words.push({p,m,c:curCat});n++}
+  else{const nw={p,m,c:curCat};words.push(nw);added.push(nw);n++}
  });
  if(n)$('inp').value='';
  $('addmsg').textContent=(n?`${n}개 추가했어요. `:'추가할 새 표현이 없어요. ')+(dup.length?`이미 저장돼 있어 건너뜀: ${dup.join(', ')}`:'');
- if(n){save();renderAll()}
+ if(n){save();renderAll();if(cfg.autogen!==false)enqueueGen(added,true)}
 };
 function renderCats(){
  const box=$('cats');box.innerHTML='';
@@ -439,17 +442,26 @@ showSync();connect();
 let cfg={provider:'gemini',key:'',model:'gemini-flash-latest',base:'http://localhost:11434/v1'};
 try{Object.assign(cfg,JSON.parse(localStorage.getItem('opic_cfg')||'{}'))}catch(e){}
 const MODELS={gemini:'gemini-flash-latest',anthropic:'claude-haiku-5-5',openai:'llama3.1'};
-function cfgUI(){$('lenient').value=String(cfg.lenient==null?1:cfg.lenient);$('forcenew').checked=!!cfg.forceNew;$('beepchk').checked=cfg.beep!==false;updateStored();$('prov').value=cfg.provider;$('key').value=cfg.key;$('model').value=cfg.model;$('base').value=cfg.base;$('baseRow').classList.toggle('hide',cfg.provider!=='openai')}
+function cfgUI(){$('autogenchk').checked=cfg.autogen!==false;$('lenient').value=String(cfg.lenient==null?1:cfg.lenient);$('forcenew').checked=!!cfg.forceNew;$('beepchk').checked=cfg.beep!==false;updateStored();$('prov').value=cfg.provider;$('key').value=cfg.key;$('model').value=cfg.model;$('base').value=cfg.base;$('baseRow').classList.toggle('hide',cfg.provider!=='openai')}
 $('prov').onchange=()=>{cfg.provider=$('prov').value;cfg.model=MODELS[cfg.provider];cfgUI()};
-$('cfgsave').onclick=()=>{cfg.key=$('key').value.trim();cfg.model=$('model').value.trim();cfg.base=$('base').value.trim();cfg.forceNew=$('forcenew').checked;cfg.beep=$('beepchk').checked;cfg.lenient=+$('lenient').value;try{localStorage.setItem('opic_cfg',JSON.stringify(cfg))}catch(e){}$('cfgmsg').textContent='저장했어요.'};
+$('cfgsave').onclick=()=>{cfg.key=$('key').value.trim();cfg.model=$('model').value.trim();cfg.base=$('base').value.trim();cfg.forceNew=$('forcenew').checked;cfg.beep=$('beepchk').checked;cfg.autogen=$('autogenchk').checked;cfg.lenient=+$('lenient').value;try{localStorage.setItem('opic_cfg',JSON.stringify(cfg))}catch(e){}$('cfgmsg').textContent='저장했어요.'};
 const cfgOk=()=>(cfg.provider==='openai'?!!(cfg.base&&cfg.model):!!(cfg.key&&cfg.model));
 cfgUI();
 $('forcenew').onchange=()=>{cfg.forceNew=$('forcenew').checked;try{localStorage.setItem('opic_cfg',JSON.stringify(cfg))}catch(e){}};
 $('lenient').onchange=()=>{cfg.lenient=+$('lenient').value;try{localStorage.setItem('opic_cfg',JSON.stringify(cfg))}catch(e){}};
+$('autogenchk').onchange=()=>{cfg.autogen=$('autogenchk').checked;try{localStorage.setItem('opic_cfg',JSON.stringify(cfg))}catch(e){}};
 $('beepchk').onchange=()=>{cfg.beep=$('beepchk').checked;try{localStorage.setItem('opic_cfg',JSON.stringify(cfg))}catch(e){}};
+const THINK=[{thinkingBudget:0},{thinkingLevel:'minimal'},null];
+let thinkIdx=0;
 async function geminiCall(model,prompt){
- const r=await ft('https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(model)+':generateContent?key='+encodeURIComponent(cfg.key),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:{responseMimeType:'application/json'}})});
- return {r,j:await r.json()};
+ for(;;){
+  const used=thinkIdx,gc={responseMimeType:'application/json'};
+  if(THINK[used])gc.thinkingConfig=THINK[used];
+  const r=await ft('https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(model)+':generateContent?key='+encodeURIComponent(cfg.key),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:gc})});
+  const j=await r.json();
+  if(!r.ok&&r.status===400&&/think/i.test((j.error&&j.error.message)||'')&&used<THINK.length-1){if(thinkIdx===used)thinkIdx++;continue}
+  return {r,j};
+ }
 }
 async function pickGemini(){
  const r=await ft('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key='+encodeURIComponent(cfg.key));
@@ -510,11 +522,39 @@ async function llmJson(prompt){
 let errCount=0,lastErr='',failUntil=0,sample=null,queue=[],loading=false,ptr=0,order=[],runId=0,skipFn=null,micFn=null,cur=null,done=0;
 const shuffle=a=>{a=a.slice();for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a};
 
+let inflight=0;const MAXF=3;
+async function genWords(pick){
+ const list=pick.map(w=>w.p+(w.m?` (뜻: ${w.m})`:'')).join('\n');
+ const out=await llmJson(`You are an English tutor for OPIc speaking practice (Korean learner, level IM–AL).
+For EACH expression below, write 3 different short, natural, everyday sentences (6-12 words) in different situations (daily life, hobbies, travel, work, home).
+Expressions:
+${list}
+
+Make the 3 sentences for one expression clearly different from each other, and keep them simple.
+Return ONLY a JSON array, no other text, one object per expression: {"word": expression as given, "sentences": [3 objects, each {"en": English sentence, "ko": natural Korean translation, "target": the exact substring of "en" that contains the expression (inflection allowed, e.g. "ran out of")}]}.`);
+ const arr=Array.isArray(out)?out:((out&&(out.expressions||out.items||out.data||Object.values(out).find(Array.isArray)))||[]);
+ const esc=t=>t.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+ const find=(en,t)=>{if(!t)return null;const i=en.toLowerCase().indexOf(String(t).toLowerCase());return i>=0?en.substr(i,String(t).length):null};
+ const stemFind=(en,w)=>{const parts=String(w).split(/\s+/).filter(Boolean).map(t=>t.length>3?esc(t.slice(0,-1))+'\\w*':esc(t));if(!parts.length)return null;const m=en.match(new RegExp(parts.join('\\W+'),'i'));return m?m[0]:null};
+ const gs=arr.map(g=>({word:g.word||'',items:(g.sentences||g.examples||[]).map(x=>{
+   if(!x||!x.en||!x.ko)return null;
+   const t=find(x.en,x.target)||find(x.en,g.word)||stemFind(x.en,g.word||'');
+   return t?{en:x.en,ko:x.ko,target:t}:null;
+ }).filter(Boolean).slice(0,3)})).filter(g=>g.items.length);
+ if(!gs.length)throw new Error('AI 응답을 해석하지 못했어요: '+JSON.stringify(out).slice(0,150));
+ gs.forEach((g,i)=>{
+  const gw=String(g.word).toLowerCase();
+  const w=pick.find(x=>x.p.toLowerCase()===gw)||pick.find(x=>gw&&(gw.includes(x.p.toLowerCase())||x.p.toLowerCase().includes(gw)))||(gs.length===pick.length?pick[i]:null);
+  if(w){g.word=w.p;cachePut(w.p,g.items)}
+ });
+ return gs;
+}
 async function fetchBatch(){
- if(loading||Date.now()<failUntil)return;loading=true;
+ if(inflight>=MAXF||Date.now()<failUntil)return;inflight++;
  try{
   if(ptr>=order.length){order=[...shuffle(pool.filter(w=>!doneWords.has(dk(w.p)))),...shuffle(pool.filter(w=>doneWords.has(dk(w.p))))];ptr=0}
-  const picked=order.slice(ptr,ptr+2);ptr+=2;
+  const n=queue.length<2?1:2;
+  const picked=order.slice(ptr,ptr+n);ptr+=n;
   const pick=[];
   picked.forEach(w=>{
    const gs=cacheGet(w.p);
@@ -522,43 +562,50 @@ async function fetchBatch(){
    else pick.push(w);
   });
   if(!pick.length)return;
-  const list=pick.map(w=>w.p+(w.m?` (뜻: ${w.m})`:'')).join('\n');
-  const out=await llmJson(`You are an English tutor for OPIc speaking practice (Korean learner, level IM–AL).
-For EACH expression below, write 3 different short, natural, everyday sentences (6-12 words) in different situations (daily life, hobbies, travel, work, home).
-Expressions:
-${list}
-
-Make the 3 sentences for one expression clearly different from each other, and keep them simple.
-Return ONLY a JSON array, no other text, one object per expression: {"word": expression as given, "sentences": [3 objects, each {"en": English sentence, "ko": natural Korean translation, "target": the exact substring of "en" that contains the expression (inflection allowed, e.g. "ran out of")}]}.`);
-  const arr=Array.isArray(out)?out:((out&&(out.expressions||out.items||out.data||Object.values(out).find(Array.isArray)))||[]);
-  const esc=t=>t.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
-  const find=(en,t)=>{if(!t)return null;const i=en.toLowerCase().indexOf(String(t).toLowerCase());return i>=0?en.substr(i,String(t).length):null};
-  const stemFind=(en,w)=>{const parts=String(w).split(/\s+/).filter(Boolean).map(t=>t.length>3?esc(t.slice(0,-1))+'\\w*':esc(t));if(!parts.length)return null;const m=en.match(new RegExp(parts.join('\\W+'),'i'));return m?m[0]:null};
-  const gs=arr.map(g=>({word:g.word||'',items:(g.sentences||g.examples||[]).map(x=>{
-    if(!x||!x.en||!x.ko)return null;
-    const t=find(x.en,x.target)||find(x.en,g.word)||stemFind(x.en,g.word||'');
-    return t?{en:x.en,ko:x.ko,target:t}:null;
-  }).filter(Boolean).slice(0,3)})).filter(g=>g.items.length);
-  if(!gs.length)throw new Error('AI 응답을 해석하지 못했어요: '+JSON.stringify(out).slice(0,150));
-  gs.forEach((g,i)=>{
-   const gw=String(g.word).toLowerCase();const w=pick.find(x=>x.p.toLowerCase()===gw)||pick.find(x=>gw&&(gw.includes(x.p.toLowerCase())||x.p.toLowerCase().includes(gw)))||(gs.length===pick.length?pick[i]:null);
-   if(w){g.word=w.p;cachePut(w.p,g.items)}
-  });
+  const gs=await genWords(pick);
   queue.push(...shuffle(gs));errCount=0;lastErr='';
  }catch(e){
   lastErr=(e&&e.message)||String(e);errCount++;
   const cw=shuffle(pool.filter(w=>cacheGet(w.p).length));
   if(cw.length){const gs0=cacheGet(cw[0].p);queue.push({word:cw[0].p,items:gs0[Math.floor(Math.random()*gs0.length)]});errCount=0;}
-failUntil=Date.now()+5000;$('status').textContent='문장 생성 실패: '+(e&&e.message||e)+' (자동으로 다시 시도 중…)';
- }finally{loading=false}
+  failUntil=Date.now()+5000;$('status').textContent='문장 생성 실패: '+(e&&e.message||e)+' (자동으로 다시 시도 중…)';
+ }finally{inflight--}
 }
+
+/* ---------- 문장 미리 만들기 (학습 전에 생성) ---------- */
+const gq=[];let gActive=0,gDone=0,gFail=0,gTotal=0,gErr='';
+function genUpd(){
+ $('genmsg').textContent=(gq.length||gActive)?('문장 만드는 중… '+gDone+'/'+gTotal+(gFail?' (실패 '+gFail+')':'')):('문장 만들기 끝: '+gDone+'/'+gTotal+'개 완료'+(gFail?', 실패 '+gFail+'개 — '+gErr:''));
+}
+async function gWorker(){
+ gActive++;
+ try{
+  while(gq.length){
+   const pick=gq.splice(0,2);
+   try{const gs=await genWords(pick);gDone+=Math.min(gs.length,pick.length)}
+   catch(e){gFail+=pick.length;gErr=(e&&e.message)||String(e);if(gFail>=6)gq.length=0}
+   genUpd();
+  }
+ }finally{gActive--;genUpd()}
+}
+function enqueueGen(list,quiet){
+ if(!cfgOk()){if(!quiet){$('genmsg').textContent='먼저 AI 설정에서 모델과 API 키를 저장해주세요.';$('aiBox').open=true}return}
+ const have=new Set(gq.map(w=>dk(w.p)));
+ const todo=list.filter(w=>!gsOf(w.p).length&&!have.has(dk(w.p)));
+ if(!todo.length){if(!gActive&&!quiet)$('genmsg').textContent='모든 표현에 저장된 문장이 있어요.';return}
+ if(!gActive&&!gq.length){gDone=0;gFail=0;gTotal=0;gErr=''}
+ gTotal+=todo.length;gq.push(...todo);
+ for(let i=gActive;i<3&&gq.length;i++)gWorker();
+ genUpd();
+}
+
 async function nextItem(id=runId){
- if(queue.length<2)fetchBatch();
+ for(let i=0;i<MAXF&&queue.length+inflight<4;i++)fetchBatch();
  const t0=Date.now();
  while(!queue.length||(jumpWord&&!queue.some(g=>dk(g.word)===dk(jumpWord)))){
   await new Promise(r=>setTimeout(r,300));
   if(id!==runId)return null;
-  if(!loading)await fetchBatch();
+  fetchBatch();
   if(errCount>=6)return null;
   $('status').textContent='문장을 만드는 중… '+Math.round((Date.now()-t0)/1000)+'초'+(lastErr?' (재시도 중 — '+lastErr+')':'');
  }
@@ -782,6 +829,7 @@ async function loop(id){
  }
 }
 
+$('pregen').onclick=()=>{const sc=$('scope').value;enqueueGen(sc==='all'?words.slice():words.filter(w=>w.c===sc),false)};
 $('retry').onclick=()=>{errCount=0;lastErr='';failUntil=0;loop(runId)};
 $('start').onclick=async()=>{
  const sc=$('scope').value;pool=sc==='all'?words.slice():words.filter(w=>w.c===sc);
