@@ -573,17 +573,26 @@ async function fetchBatch(){
 }
 
 /* ---------- 문장 미리 만들기 (학습 전에 생성) ---------- */
-const gq=[];let gActive=0,gDone=0,gFail=0,gTotal=0,gErr='';
+const gq=[];let gActive=0,gDone=0,gFail=0,gTotal=0,gErr='',gNote='',gConsec=0;
 function genUpd(){
- $('genmsg').textContent=(gq.length||gActive)?('문장 만드는 중… '+gDone+'/'+gTotal+(gFail?' (실패 '+gFail+')':'')):('문장 만들기 끝: '+gDone+'/'+gTotal+'개 완료'+(gFail?', 실패 '+gFail+'개 — '+gErr:''));
+ $('genmsg').textContent=(gq.length||gActive)?('문장 만드는 중… '+gDone+'/'+gTotal+(gFail?' (실패 '+gFail+')':'')+(gNote?' — '+gNote:'')):('문장 만들기 끝: '+gDone+'/'+gTotal+'개 완료'+(gFail?', 실패 '+gFail+'개 — '+gErr+' (다시 누르면 실패한 표현만 다시 시도해요)':''));
 }
+const transient=m=>/429|rate|quota|overload|high demand|unavailable|try again|timeout|시간 초과|failed to fetch|연결하지 못/i.test(m);
 async function gWorker(){
  gActive++;
  try{
   while(gq.length){
    const pick=gq.splice(0,2);
-   try{const gs=await genWords(pick);gDone+=Math.min(gs.length,pick.length)}
-   catch(e){gFail+=pick.length;gErr=(e&&e.message)||String(e);if(gFail>=6)gq.length=0}
+   let ok=false,msg='';
+   for(let tryN=1;tryN<=3&&!ok;tryN++){
+    try{const gs=await genWords(pick);gDone+=Math.min(gs.length,pick.length);ok=true;gConsec=0;gNote=''}
+    catch(e){
+     msg=(e&&e.message)||String(e);
+     if(tryN<3&&transient(msg)){gNote='서버가 바빠서 잠시 후 다시 시도해요 ('+tryN+'/3)';genUpd();await new Promise(r=>setTimeout(r,7000*tryN))}
+     else break;
+    }
+   }
+   if(!ok){gFail+=pick.length;gErr=msg;gNote='';if(++gConsec>=3)gq.length=0}
    genUpd();
   }
  }finally{gActive--;genUpd()}
@@ -593,9 +602,9 @@ function enqueueGen(list,quiet){
  const have=new Set(gq.map(w=>dk(w.p)));
  const todo=list.filter(w=>!gsOf(w.p).length&&!have.has(dk(w.p)));
  if(!todo.length){if(!gActive&&!quiet)$('genmsg').textContent='모든 표현에 저장된 문장이 있어요.';return}
- if(!gActive&&!gq.length){gDone=0;gFail=0;gTotal=0;gErr=''}
+ if(!gActive&&!gq.length){gDone=0;gFail=0;gTotal=0;gErr='';gNote='';gConsec=0}
  gTotal+=todo.length;gq.push(...todo);
- for(let i=gActive;i<3&&gq.length;i++)gWorker();
+ for(let i=gActive;i<2&&gq.length;i++)gWorker();
  genUpd();
 }
 
