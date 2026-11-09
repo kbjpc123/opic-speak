@@ -36,6 +36,7 @@ button:disabled{opacity:.5}
 @keyframes p{50%{transform:scale(1.08)}}
 .center{display:flex;flex-direction:column;align-items:center;gap:10px}
 .hide{display:none}
+#mic.paused{background:#6b7280}
 .sw{color:var(--mu);transition:color .15s}
 .sw.on{color:var(--tx)}
 .sw.t{color:#5bc8f5;font-weight:800}
@@ -111,7 +112,7 @@ input{flex:1;min-width:120px}
   <div class="row">
    <button class="sec" id="hear">🔊 다시 듣기</button>
    <button class="sec" id="reveal">정답 보기</button>
-   <button class="sec" id="skip">문장 건너뛰기</button><button class="sec" id="nextexp">다음 표현 ⏭</button>
+   <button class="sec" id="skip">문장 건너뛰기</button><button class="sec" id="nextexp">다음 표현 ⏭</button><button class="sec" id="known">✔ 이미 알아요</button>
   <button class="sec hide" id="retry">🔄 다시 시도</button>
    <button class="sec" id="stop">종료</button>
   </div>
@@ -558,6 +559,12 @@ async function until(id,ok,onText){
   const r=await race(listen(onText?null:ok,onText));
   if(r===SKIP){try{rec&&rec.abort()}catch(e){}return 'skip'}
   if(id!==runId)return 'cancel';
+  if(paused&&!(r&&r.done)){
+   $('status').textContent='⏸ 일시정지 — 마이크 버튼을 누르면 다시 시작해요';
+   const y=await race(new Promise(z=>resumeFn=z));
+   if(y===SKIP)return 'skip';
+   continue;
+  }
   if(r.err&&r.err!=='no-speech'&&r.err!=='aborted'){
    $('status').textContent=r.err==='not-allowed'||r.err==='service-not-allowed'?'이 화면에서는 마이크 인식이 막혀 있어요('+r.err+'). 아래 입력칸에 답을 적거나 키보드 음성입력을 써주세요.':'인식 오류('+r.err+'). 키보드로 답하거나 🎙️를 눌러 다시 시도해요.';
    try{$('ans').focus()}catch(e){}
@@ -658,20 +665,48 @@ const pHas=k=>!!(progMap[k]&&progMap[k].d);
 const pAdd=k=>{progMap[k]={t:Date.now(),d:1}};
 const pDel=k=>{if(progMap[k])progMap[k]={t:Date.now(),d:0}};
 const saveProg=()=>{try{localStorage.setItem('opic_prog',JSON.stringify(progMap))}catch(e){}if(docRef)push()};
+let paused=false,resumeFn=null,knownFlag=false,inGroup=false,studying=false,wl=null;
+function resetPause(){paused=false;resumeFn=null;try{$('mic').textContent='🎙️';$('mic').classList.remove('paused')}catch(e){}}
+async function wakeOn(){try{if(typeof navigator!=='undefined'&&navigator.wakeLock&&!wl){wl=await navigator.wakeLock.request('screen');wl.addEventListener('release',()=>{wl=null})}}catch(e){wl=null}}
+function wakeOff(){try{wl&&wl.release()}catch(e){}wl=null}
+try{document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&studying)wakeOn()})}catch(e){}
 let curWord='',jumpWord=null,skipG=false,doneWords=new Set(),round=1;
 const dk=w=>String(w||'').trim().toLowerCase();
+function updProg(){
+ const tot=Math.max(pool.length,1);
+ $('prog').textContent='표현 '+Math.min(doneWords.size+1,tot)+' / '+tot+(round>1?' · '+round+'회차':'');
+ $('barfill').style.width=(doneWords.size/tot*100)+'%';
+}
+function markDone(word,counted){
+ const k=dk(word),tot=Math.max(pool.length,1);
+ if(counted)done++;
+ doneWords.add(k);pAdd(k);saveProg();
+ if(doneWords.size>=tot){$('barfill').style.width='100%';pool.forEach(w=>pDel(dk(w.p)));saveProg();doneWords=new Set();round++}
+ updProg();renderPlist();
+ $('count').textContent=`이번 세션 ${done}개 표현 완료`;
+}
+function unmarkDone(word){
+ const k=dk(word);doneWords.delete(k);pDel(k);saveProg();updProg();renderPlist();
+}
 function renderPlist(){
  const box=$('plistbox');box.innerHTML='';
  pool.forEach((w,i)=>{
+  const k=dk(w.p),isDone=doneWords.has(k);
+  const row=document.createElement('div');row.style.cssText='display:flex;gap:6px;margin-bottom:6px';
   const b=document.createElement('button');
-  b.className='sec';b.style.cssText='display:block;width:100%;text-align:left;margin-bottom:6px;padding:8px 12px';
-  b.textContent=(i+1)+'. '+w.p+(doneWords.has(dk(w.p))?'  ✔':'')+(dk(w.p)===dk(curWord)?'  ▶':'');
-  b.onclick=()=>jump(w.p);box.append(b);
+  b.className='sec';b.style.cssText='flex:1;text-align:left;padding:8px 12px';
+  b.textContent=(i+1)+'. '+w.p+(isDone?'  ✔':'')+(k===dk(curWord)?'  ▶':'');
+  b.onclick=()=>jump(w.p);
+  const kb=document.createElement('button');
+  kb.className='sec';kb.style.cssText='flex:none;padding:8px 10px';
+  kb.textContent=isDone?'해제':'✔ 알아요';
+  kb.onclick=()=>{if(doneWords.has(k))unmarkDone(w.p);else markDone(w.p,false)};
+  row.append(b,kb);box.append(row);
  });
 }
 function jump(w){
  if(!pool.length)return;
- skipG=false;
+ skipG=false;resetPause();
  const id=++runId;
  try{rec&&rec.abort()}catch(e){}try{speechSynthesis.cancel()}catch(e){}
  skipFn&&skipFn();
@@ -684,26 +719,26 @@ function jump(w){
  loop(id);
 }
 async function runGroup(g,id){
+ inGroup=true;
+ try{await runGroup0(g,id)}finally{inGroup=false}
+}
+async function runGroup0(g,id){
  curWord=g.word||'';
- const tot=Math.max(pool.length,1);
- $('prog').textContent='표현 '+Math.min(doneWords.size+1,tot)+' / '+tot+(round>1?' · '+round+'회차':'');
- $('barfill').style.width=(doneWords.size/tot*100)+'%';
+ const endSkip=()=>{skipG=false;if(knownFlag){knownFlag=false;markDone(g.word,false)}};
+ updProg();
  renderPlist();
  const n=g.items.length;
  if(!skipG){await stage0(g,id);if(id!==runId)return}
  for(let i=0;i<n&&!skipG;i++){if(id!==runId)return;await stage1(g.items[i],id,`(${i+1}/${n})`)}
  if(id!==runId)return;
- if(skipG){skipG=false;return}
+ if(skipG){endSkip();return}
  $('badge').textContent='잠시 후 빈칸 채우기';$('tgt').textContent='';$('en').textContent='';$('ko').textContent='';
  $('status').textContent='이제 방금 들은 문장들을 빈칸으로 연습해요';
  await race(new Promise(r=>setTimeout(r,1500)));
  for(let i=0;i<n&&!skipG;i++){if(id!==runId)return;await stage2(g.items[i],id,`(${i+1}/${n})`)}
  if(id!==runId)return;
- if(skipG){skipG=false;return}
- done++;doneWords.add(dk(g.word));pAdd(dk(g.word));saveProg();
- if(doneWords.size>=tot){$('barfill').style.width='100%';pool.forEach(w=>pDel(dk(w.p)));saveProg();doneWords=new Set();round++}else $('barfill').style.width=(doneWords.size/tot*100)+'%';
- renderPlist();
- $('count').textContent=`이번 세션 ${done}개 표현 완료`;
+ if(skipG){endSkip();return}
+ markDone(g.word,true);
 }
 
 async function loop(id){
@@ -731,6 +766,7 @@ $('start').onclick=async()=>{
  order=[...shuffle(pool.filter(w=>!doneWords.has(dk(w.p)))),...shuffle(pool.filter(w=>doneWords.has(dk(w.p))))];
  ptr=0;done=0;$('count').textContent=resetMsg||(doneWords.size?'이전에 연습한 '+doneWords.size+'개는 뒤로 미루고, 안 한 표현부터 해요':'');
  $('setup').classList.add('hide');$('study').classList.remove('hide');renderPlist();
+ studying=true;resetPause();wakeOn();
  const id=++runId;
  ac();
  try{speechSynthesis.getVoices();speechSynthesis.speak(new SpeechSynthesisUtterance(''))}catch(e){}
@@ -738,7 +774,8 @@ $('start').onclick=async()=>{
 };
 $('mic').onclick=()=>{
  if(micFn){const f=micFn;micFn=null;f();return}
- stopFn&&stopFn();
+ if(paused){const f=resumeFn;resetPause();f&&f();return}
+ if(stopFn){paused=true;$('mic').textContent='▶️';$('mic').classList.add('paused');stopFn()}
 };
 const submitTyped=()=>{
  const t=$('ans').value.trim();if(!t)return;$('ans').value='';
@@ -746,14 +783,16 @@ const submitTyped=()=>{
 };
 $('go').onclick=submitTyped;
 $('ans').onkeydown=e=>{if(e.key==='Enter')submitTyped()};
-$('nextexp').onclick=()=>{skipG=true;try{rec&&rec.abort()}catch(e){}try{speechSynthesis.cancel()}catch(e){}skipFn&&skipFn()};
-$('skip').onclick=()=>{try{rec&&rec.abort()}catch(e){}try{speechSynthesis.cancel()}catch(e){}skipFn&&skipFn()};
+$('known').onclick=()=>{if(!inGroup)return;resetPause();knownFlag=true;skipG=true;try{rec&&rec.abort()}catch(e){}try{speechSynthesis.cancel()}catch(e){}skipFn&&skipFn()};
+$('nextexp').onclick=()=>{if(!inGroup)return;resetPause();skipG=true;try{rec&&rec.abort()}catch(e){}try{speechSynthesis.cancel()}catch(e){}skipFn&&skipFn()};
+$('skip').onclick=()=>{resetPause();try{rec&&rec.abort()}catch(e){}try{speechSynthesis.cancel()}catch(e){}skipFn&&skipFn()};
 $('hear').onclick=()=>cur&&speak(cur.en,'en-US');
 $('reveal').onclick=()=>{if(cur)$('en').innerHTML=hl(cur.en,cur.target)};
 $('stop').onclick=()=>{
  runId++;try{rec&&rec.abort()}catch(e){}try{speechSynthesis.cancel()}catch(e){}
  skipFn&&skipFn();
  $('study').classList.add('hide');$('setup').classList.remove('hide');
+ studying=false;wakeOff();resetPause();
 };
 
 renderAll();
