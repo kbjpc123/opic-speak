@@ -71,6 +71,7 @@ input{flex:1;min-width:120px}
  </div>
  <div class="card">
   <label class="hint">학습 범위 <select id="scope"></select></label>
+  <label class="hint" style="display:block;margin-top:8px">학습 방식 <select id="mode"><option value="">말하기 연습</option><option value="expr">듣기만 · 표현</option><option value="sent">듣기만 · 예문</option><option value="both">듣기만 · 표현+예문</option></select></label>
   <div class="hint" id="env" style="margin-top:8px"></div>
   <div class="hint" id="sync">이 기기에 저장 중</div>
   <div class="row"><button id="start" style="flex:1">학습 시작</button></div>
@@ -112,7 +113,7 @@ input{flex:1;min-width:120px}
   <div class="center">
    <button id="mic" aria-label="마이크">🎙️</button>
    <div id="status"></div>
-   <div class="row" style="width:100%;margin-top:0"><input id="ans" placeholder="마이크가 안 될 때: 여기에 입력 (키보드 음성입력 가능)"><button class="sec" id="go">확인</button></div>
+   <div class="row" id="ansrow" style="width:100%;margin-top:0"><input id="ans" placeholder="마이크가 안 될 때: 여기에 입력 (키보드 음성입력 가능)"><button class="sec" id="go">확인</button></div>
   </div>
   <div class="row">
    <button class="sec" id="hear">🔊 다시 듣기</button>
@@ -137,7 +138,7 @@ try{const o=JSON.parse(localStorage.getItem('opic_store')||'null');if(o){words=o
 function ensure(){
  if(!cats.length)cats=[{id:'c0',name:'기본'}];
  words.forEach(w=>{if(!w.c||!cats.some(c=>c.id===w.c))w.c=cats[0].id});
- if(!cats.some(c=>c.id===curCat))curCat=cats[0].id;
+ if(curCat!=='all'&&!cats.some(c=>c.id===curCat))curCat=cats[0].id;
 }
 function save(){
  ensure();rev=Math.max(Date.now(),rev+1);
@@ -148,11 +149,12 @@ function save(){
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
 $('env').textContent=SR?'이 브라우저는 음성 인식을 지원해요. 마이크 권한을 허용해주세요.':'이 브라우저는 음성 인식을 지원하지 않아요. 안드로이드 Chrome이나 아이폰 Safari에서 열어주세요.';
 
-let openSent=new Set(),selected=new Set();
+let openSent=new Set(),selected=new Set(),moveDest='';
+const catName=id=>(cats.find(x=>x.id===id)||{}).name||'';
 const gsOf=p=>{try{return cacheGet(p)}catch(e){return []}};
 function render(){
  const box=$('list');box.innerHTML='';
- const vis=words.map((w,i)=>[w,i]).filter(([w])=>w.c===curCat);
+ const vis=words.map((w,i)=>[w,i]).filter(([w])=>curCat==='all'||w.c===curCat);
  box.classList.toggle('hide',!listOpen);
  $('toggle').textContent=(listOpen?'▲ 접기':'▼ 펼치기')+' · '+vis.length+'개';
  const keyOf=w=>w.p.trim().toLowerCase();
@@ -169,12 +171,22 @@ function render(){
   const b3=mk('선택 삭제 ('+selN+')','',()=>{
    const del=new Set(vis.filter(([w])=>selected.has(keyOf(w))).map(([w])=>keyOf(w)));
    if(!del.size)return;
-   words=words.filter(w=>!(w.c===curCat&&del.has(keyOf(w))));
+   words=words.filter(w=>!((curCat==='all'||w.c===curCat)&&del.has(keyOf(w))));
    del.forEach(k=>{selected.delete(k);openSent.delete(k)});
    save();renderAll();
   });
   b3.disabled=!selN;b3.style.background='#dc2626';
-  bar.append(b1,b2,b3);box.append(bar);
+  const ms=document.createElement('select');
+  cats.forEach(c=>{const o=document.createElement('option');o.value=c.id;o.textContent=c.name;ms.append(o)});
+  if(!cats.some(c=>c.id===moveDest))moveDest=(cats.find(c=>c.id!==curCat)||cats[0]).id;
+  ms.value=moveDest;ms.onchange=()=>{moveDest=ms.value};ms.style.cssText='padding:6px;font-size:13px';
+  const bm=mk('선택 이동 ('+selN+')','sec',()=>{
+   const dest=ms.value;let n=0;
+   vis.forEach(([w])=>{if(selected.has(keyOf(w))&&w.c!==dest){w.c=dest;n++}});
+   selected.clear();save();renderAll();
+  });
+  bm.disabled=!selN;
+  bar.append(b1,b2,ms,bm,b3);box.append(bar);
  }
  vis.forEach(([w])=>{
   const wrap=document.createElement('div');
@@ -185,12 +197,9 @@ function render(){
   const cb=document.createElement('input');cb.type='checkbox';cb.checked=selected.has(key);
   cb.style.cssText='flex:none;min-width:0;width:20px;height:20px';
   cb.onchange=()=>{if(cb.checked)selected.add(key);else selected.delete(key);render()};
-  const sp=document.createElement('span');sp.textContent=w.p+(w.m?' — '+w.m:'');
+  const sp=document.createElement('span');sp.textContent=w.p+(w.m?' — '+w.m:'')+(curCat==='all'?'  ('+catName(w.c)+')':'');
   sp.style.cssText='flex:1;min-width:120px;cursor:'+(cnt?'pointer':'default');sp.onclick=tog;
   const eb=document.createElement('button');eb.className='sec';eb.textContent='예문 '+cnt+(cnt?(show?' ▲':' ▼'):'');eb.disabled=!cnt;eb.onclick=tog;
-  const sel=document.createElement('select');
-  cats.forEach(c=>{const o=document.createElement('option');o.value=c.id;o.textContent=c.name;if(c.id===w.c)o.selected=true;sel.append(o)});
-  sel.onchange=()=>{w.c=sel.value;save();renderAll()};
   const panel=document.createElement('div');panel.className='hint';panel.style.cssText='padding:6px 4px 10px 32px';
   panel.classList.toggle('hide',!show);
   if(show)gs.forEach((g,gi)=>{
@@ -201,7 +210,7 @@ function render(){
     panel.append(e,k);
    });
   });
-  d.append(cb,sp,eb,sel);wrap.append(d,panel);box.append(wrap);
+  d.append(cb,sp,eb);wrap.append(d,panel);box.append(wrap);
  });
  if(!vis.length)box.innerHTML='<div class="hint">이 카테고리에는 아직 표현이 없어요.</div>';
 }
@@ -213,7 +222,7 @@ $('add').onclick=()=>{
   const p=(k<0?l:l.slice(0,k)).trim(),m=k<0?'':l.slice(k+1).trim();
   if(!p)return;
   if(words.some(w=>(w.p||'').toLowerCase()===p.toLowerCase()))dup.push(p);
-  else{const nw={p,m,c:curCat};words.push(nw);added.push(nw);n++}
+  else{const nw={p,m,c:curCat==='all'?cats[0].id:curCat};words.push(nw);added.push(nw);n++}
  });
  if(n)$('inp').value='';
  $('addmsg').textContent=(n?`${n}개 추가했어요. `:'추가할 새 표현이 없어요. ')+(dup.length?`이미 저장돼 있어 건너뜀: ${dup.join(', ')}`:'');
@@ -221,6 +230,7 @@ $('add').onclick=()=>{
 };
 function renderCats(){
  const box=$('cats');box.innerHTML='';
+ {const b=document.createElement('button');b.className='chip'+(curCat==='all'?' on':'');b.textContent='전체 '+words.length;b.onclick=()=>{curCat='all';selected.clear();renderAll()};box.append(b)}
  cats.forEach(c=>{
   const b=document.createElement('button');b.className='chip'+(c.id===curCat?' on':'');
   b.textContent=c.name+' '+words.filter(w=>w.c===c.id).length;
@@ -234,8 +244,10 @@ function renderScope(){
 }
 function renderAll(){renderCats();render();renderScope()}
 $('catadd').onclick=()=>{const n=$('catname').value.trim();if(!n)return;const c={id:uid(),name:n};cats.push(c);curCat=c.id;$('catname').value='';save();renderAll()};
-$('catren').onclick=()=>{const n=$('catname').value.trim(),c=cats.find(c=>c.id===curCat);if(!n||!c)return;c.name=n;$('catname').value='';save();renderAll()};
-$('catdel').onclick=()=>{
+$('catren').onclick=()=>{if(curCat==='all'){$('addmsg').textContent='"전체"는 이름을 바꿀 수 없어요.';return}
+ const n=$('catname').value.trim(),c=cats.find(c=>c.id===curCat);if(!n||!c)return;c.name=n;$('catname').value='';save();renderAll()};
+$('catdel').onclick=()=>{if(curCat==='all'){$('addmsg').textContent='"전체"는 삭제할 수 없어요.';return}
+ 
  if(cats.length<2){$('sync').textContent='카테고리는 최소 하나가 필요해요.';return}
  const i=cats.findIndex(c=>c.id===curCat);cats.splice(i,1);const t=cats[0].id;
  words.forEach(w=>{if(w.c===curCat)w.c=t});curCat=t;save();renderAll();
@@ -462,13 +474,14 @@ showSync();connect();
 let cfg={provider:'gemini',key:'',model:'gemini-flash-latest',base:'http://localhost:11434/v1'};
 try{Object.assign(cfg,JSON.parse(localStorage.getItem('opic_cfg')||'{}'))}catch(e){}
 const MODELS={gemini:'gemini-flash-latest',anthropic:'claude-haiku-5-5',openai:'llama3.1'};
-function cfgUI(){$('autogenchk').checked=cfg.autogen!==false;$('lenient').value=String(cfg.lenient==null?1:cfg.lenient);$('forcenew').checked=!!cfg.forceNew;$('beepchk').checked=cfg.beep!==false;updateStored();$('prov').value=cfg.provider;$('key').value=cfg.key;$('model').value=cfg.model;$('base').value=cfg.base;$('baseRow').classList.toggle('hide',cfg.provider!=='openai')}
+function cfgUI(){$('mode').value=cfg.mode||'';$('autogenchk').checked=cfg.autogen!==false;$('lenient').value=String(cfg.lenient==null?1:cfg.lenient);$('forcenew').checked=!!cfg.forceNew;$('beepchk').checked=cfg.beep!==false;updateStored();$('prov').value=cfg.provider;$('key').value=cfg.key;$('model').value=cfg.model;$('base').value=cfg.base;$('baseRow').classList.toggle('hide',cfg.provider!=='openai')}
 $('prov').onchange=()=>{cfg.provider=$('prov').value;cfg.model=MODELS[cfg.provider];cfgUI()};
 $('cfgsave').onclick=()=>{cfg.key=$('key').value.trim();cfg.model=$('model').value.trim();cfg.base=$('base').value.trim();cfg.forceNew=$('forcenew').checked;cfg.beep=$('beepchk').checked;cfg.autogen=$('autogenchk').checked;cfg.lenient=+$('lenient').value;try{localStorage.setItem('opic_cfg',JSON.stringify(cfg))}catch(e){}$('cfgmsg').textContent='저장했어요.'};
 const cfgOk=()=>(cfg.provider==='openai'?!!(cfg.base&&cfg.model):!!(cfg.key&&cfg.model));
 cfgUI();
 $('forcenew').onchange=()=>{cfg.forceNew=$('forcenew').checked;try{localStorage.setItem('opic_cfg',JSON.stringify(cfg))}catch(e){}};
 $('lenient').onchange=()=>{cfg.lenient=+$('lenient').value;try{localStorage.setItem('opic_cfg',JSON.stringify(cfg))}catch(e){}};
+$('mode').onchange=()=>{cfg.mode=$('mode').value;try{localStorage.setItem('opic_cfg',JSON.stringify(cfg))}catch(e){}};
 $('autogenchk').onchange=()=>{cfg.autogen=$('autogenchk').checked;try{localStorage.setItem('opic_cfg',JSON.stringify(cfg))}catch(e){}};
 $('beepchk').onchange=()=>{cfg.beep=$('beepchk').checked;try{localStorage.setItem('opic_cfg',JSON.stringify(cfg))}catch(e){}};
 const THINK=[{thinkingBudget:0},{thinkingLevel:'minimal'},null];
@@ -578,7 +591,7 @@ async function fetchBatch(){
   const pick=[];
   picked.forEach(w=>{
    const gs=cacheGet(w.p);
-   if(!cfg.forceNew&&gs.length){const k=((useIdx[w.p]??Math.floor(Math.random()*gs.length))+1);useIdx[w.p]=k;queue.push({word:w.p,items:gs[k%gs.length]})}
+   if((lmode||!cfg.forceNew)&&gs.length){const k=((useIdx[w.p]??Math.floor(Math.random()*gs.length))+1);useIdx[w.p]=k;queue.push({word:w.p,items:gs[k%gs.length]})}
    else pick.push(w);
   });
   if(!pick.length)return;
@@ -588,7 +601,7 @@ async function fetchBatch(){
   lastErr=(e&&e.message)||String(e);errCount++;
   const cw=shuffle(pool.filter(w=>cacheGet(w.p).length));
   if(cw.length){const gs0=cacheGet(cw[0].p);queue.push({word:cw[0].p,items:gs0[Math.floor(Math.random()*gs0.length)]});errCount=0;}
-  failUntil=Date.now()+5000;$('status').textContent='문장 생성 실패: '+(e&&e.message||e)+' (자동으로 다시 시도 중…)';
+  failUntil=Date.now()+5000;if(!lmode)$('status').textContent='문장 생성 실패: '+(e&&e.message||e)+' (자동으로 다시 시도 중…)';
  }finally{inflight--}
 }
 
@@ -770,7 +783,9 @@ const pAdd=k=>{progMap[k]={t:Date.now(),d:1}};
 const pDel=k=>{if(progMap[k])progMap[k]={t:Date.now(),d:0}};
 const saveProg=()=>{try{localStorage.setItem('opic_prog',JSON.stringify(progMap))}catch(e){}if(docRef)push()};
 let skipUsed=false,paused=false,resumeFn=null,knownFlag=false,inGroup=false,studying=false,wl=null;
-function resetPause(){paused=false;resumeFn=null;try{$('mic').textContent='🎙️';$('mic').classList.remove('paused')}catch(e){}}
+let lmode='',lJump=null;
+function applyMode(){['ansrow','reveal','known'].forEach(id=>$(id).classList.toggle('hide',!!lmode))}
+function resetPause(){paused=false;resumeFn=null;try{$('mic').textContent=lmode?'⏸':'🎙️';$('mic').classList.remove('paused')}catch(e){}}
 async function wakeOn(){try{if(typeof navigator!=='undefined'&&navigator.wakeLock&&!wl){wl=await navigator.wakeLock.request('screen');wl.addEventListener('release',()=>{wl=null})}}catch(e){wl=null}}
 function wakeOff(){try{wl&&wl.release()}catch(e){}wl=null}
 try{document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&studying)wakeOn()})}catch(e){}
@@ -810,7 +825,8 @@ function renderPlist(){
 }
 function jump(w){
  if(!pool.length)return;
- if(inGroup&&skipUsed&&curWord)markDone(curWord,false);
+ if(!lmode&&inGroup&&skipUsed&&curWord)markDone(curWord,false);
+ lJump=w;
  skipG=false;resetPause();
  const id=++runId;
  try{rec&&rec.abort()}catch(e){}try{speechSynthesis.cancel()}catch(e){}
@@ -821,7 +837,7 @@ function jump(w){
  order=[target,...(rest.length?rest:shuffle(pool.filter(x=>x!==target)))];ptr=0;
  errCount=0;lastErr='';failUntil=0;
  $('plist').open=false;
- loop(id);
+ runLoop(id);
 }
 async function runGroup(g,id){
  inGroup=true;
@@ -858,27 +874,114 @@ async function loop(id){
  }
 }
 
+const runLoop=id=>lmode?listenLoop(id):loop(id);
+async function lsay(text,lang,id){
+ for(;;){
+  if(id!==runId)return 'cancel';
+  if(skipG)return 'skip';
+  if(paused){const r=await race(new Promise(r=>{resumeFn=r}));if(r===SKIP)return 'skip';continue}
+  const r=await race(speak(text,lang));
+  if(r===SKIP)return 'skip';
+  if(id!==runId)return 'cancel';
+  if(skipG)return 'skip';
+  if(paused)continue;
+  return '';
+ }
+}
+async function lgap(ms,id){
+ const end=Date.now()+ms;
+ while(Date.now()<end){
+  if(id!==runId)return 'cancel';
+  if(skipG)return 'skip';
+  if(paused){const r=await race(new Promise(r=>{resumeFn=r}));if(r===SKIP)return 'skip';continue}
+  const r=await race(new Promise(r=>setTimeout(r,Math.max(1,Math.min(200,end-Date.now())))));
+  if(r===SKIP)return 'skip';
+ }
+ return id!==runId?'cancel':'';
+}
+async function listenLoop(id){
+ $('retry').classList.add('hide');
+ const tot=Math.max(pool.length,1);
+ let exprOrder=[],ei=0;
+ while(id===runId){
+  let g,w;
+  if(lmode==='expr'){
+   if(lJump){w=pool.find(x=>dk(x.p)===dk(lJump));lJump=null}
+   if(!w){if(ei>=exprOrder.length){exprOrder=shuffle(pool);ei=0}w=exprOrder[ei++]}
+   g={word:w.p,items:[]};
+  }else{
+   $('status').textContent='문장을 만드는 중…';
+   g=await nextItem(id);
+   if(id!==runId)return;
+   if(!g){$('status').textContent='문장을 만들지 못했어요: '+(lastErr||'알 수 없는 오류')+' — 다시 시도 버튼을 눌러보세요.';$('retry').classList.remove('hide');return}
+   w=pool.find(x=>dk(x.p)===dk(g.word));
+  }
+  curWord=g.word;knownFlag=false;skipUsed=false;skipG=false;
+  const pos=Math.max(pool.findIndex(x=>dk(x.p)===dk(g.word)),0)+1;
+  $('prog').textContent='🎧 듣기 모드 · 표현 '+pos+' / '+tot;$('barfill').style.width=(pos/tot*100)+'%';
+  renderPlist();$('status').textContent='';$('tgt').textContent='';
+  inGroup=true;
+  try{
+   if(lmode==='expr'||lmode==='both'){
+    cur={en:g.word,ko:(w&&w.m)||'',target:g.word};
+    $('badge').textContent='듣기 · 표현';
+    $('en').innerHTML=hl(g.word,g.word);$('ko').textContent=cur.ko;
+    let r=await lsay(g.word,'en-US',id);if(r==='cancel')return;
+    if(r!=='skip'&&cur.ko){
+     r=await lgap(600,id);if(r==='cancel')return;
+     if(r!=='skip'){r=await lsay(cur.ko,'ko-KR',id);if(r==='cancel')return}
+    }
+    if(!skipG){r=await lgap(lmode==='expr'?1500:900,id);if(r==='cancel')return}
+   }
+   if(lmode!=='expr'&&!skipG){
+    for(let i=0;i<g.items.length&&!skipG;i++){
+     const it=g.items[i];cur=it;
+     $('badge').textContent='듣기 · 예문 ('+(i+1)+'/'+g.items.length+')';
+     $('en').innerHTML=hl(it.en,it.target);$('ko').textContent=it.ko;
+     let r=await lsay(it.en,'en-US',id);if(r==='cancel')return;if(r==='skip')continue;
+     r=await lgap(500,id);if(r==='cancel')return;if(r==='skip')continue;
+     r=await lsay(it.ko,'ko-KR',id);if(r==='cancel')return;if(r==='skip')continue;
+     r=await lgap(1200,id);if(r==='cancel')return;
+    }
+   }
+  }finally{inGroup=false}
+  skipG=false;
+ }
+}
 $('pregen').onclick=()=>{const sc=$('scope').value;enqueueGen(sc==='all'?words.slice():words.filter(w=>w.c===sc),false)};
-$('retry').onclick=()=>{errCount=0;lastErr='';failUntil=0;loop(runId)};
+$('retry').onclick=()=>{errCount=0;lastErr='';failUntil=0;runLoop(runId)};
 $('start').onclick=async()=>{
+ lmode=$('mode').value;
  const sc=$('scope').value;pool=sc==='all'?words.slice():words.filter(w=>w.c===sc);
  if(!pool.length){$('env').textContent='선택한 범위에 표현이 없어요. 먼저 추가해주세요.';return}
- if(!cfgOk()&&(cfg.forceNew||pool.some(w=>!cacheGet(w.p).length))){$('env').textContent='먼저 "AI 설정"에서 모델과 API 키를 저장해주세요.';$('aiBox').open=true;return}
- round=1;jumpWord=null;skipG=false;curWord='';
- doneWords=new Set(pool.map(w=>dk(w.p)).filter(k=>pHas(k)));
+ if(lmode&&lmode!=='expr'&&!cfgOk()){
+  pool=pool.filter(w=>cacheGet(w.p).length);
+  if(!pool.length){$('env').textContent='저장된 예문이 없어요. 먼저 AI 설정을 하고 "문장 미리 만들기"를 해주세요.';$('aiBox').open=true;return}
+ }
+ if(!lmode&&!cfgOk()&&(cfg.forceNew||pool.some(w=>!cacheGet(w.p).length))){$('env').textContent='먼저 "AI 설정"에서 모델과 API 키를 저장해주세요.';$('aiBox').open=true;return}
+ round=1;jumpWord=null;lJump=null;skipG=false;curWord='';
  let resetMsg='';
- if(doneWords.size>=pool.length){pool.forEach(w=>pDel(dk(w.p)));saveProg();doneWords=new Set();resetMsg='모든 표현을 연습해서 처음부터 다시 시작해요.'}
+ if(lmode){doneWords=new Set();resetMsg='🎧 듣기 모드 — 연습 기록에는 반영되지 않아요'}
+ else{
+  doneWords=new Set(pool.map(w=>dk(w.p)).filter(k=>pHas(k)));
+  if(doneWords.size>=pool.length){pool.forEach(w=>pDel(dk(w.p)));saveProg();doneWords=new Set();resetMsg='모든 표현을 연습해서 처음부터 다시 시작해요.'}
+ }
  await loadCache();queue=[];
  order=[...shuffle(pool.filter(w=>!doneWords.has(dk(w.p)))),...shuffle(pool.filter(w=>doneWords.has(dk(w.p))))];
  ptr=0;done=0;$('count').textContent=resetMsg||(doneWords.size?'이전에 연습한 '+doneWords.size+'개는 뒤로 미루고, 안 한 표현부터 해요':'');
  $('setup').classList.add('hide');$('study').classList.remove('hide');renderPlist();
- studying=true;resetPause();wakeOn();
+ studying=true;applyMode();resetPause();wakeOn();
  const id=++runId;
  ac();
  try{speechSynthesis.getVoices();speechSynthesis.speak(new SpeechSynthesisUtterance(''))}catch(e){}
- loop(id);
+ runLoop(id);
 };
 $('mic').onclick=()=>{
+ if(lmode){
+  if(paused){const f=resumeFn;resetPause();f&&f()}
+  else{paused=true;$('mic').textContent='▶️';$('mic').classList.add('paused');try{speechSynthesis.cancel()}catch(e){}}
+  return;
+ }
  if(micFn){const f=micFn;micFn=null;f();return}
  if(paused){const f=resumeFn;resetPause();f&&f();return}
  if(stopFn){paused=true;$('mic').textContent='▶️';$('mic').classList.add('paused');stopFn()}
@@ -895,7 +998,7 @@ $('skip').onclick=()=>{resetPause();skipUsed=true;try{rec&&rec.abort()}catch(e){
 $('hear').onclick=()=>cur&&speak(cur.en,'en-US');
 $('reveal').onclick=()=>{if(cur)$('en').innerHTML=hl(cur.en,cur.target)};
 $('stop').onclick=()=>{
- if(inGroup&&skipUsed&&curWord)markDone(curWord,false);
+ if(!lmode&&inGroup&&skipUsed&&curWord)markDone(curWord,false);
  runId++;try{rec&&rec.abort()}catch(e){}try{speechSynthesis.cancel()}catch(e){}
  skipFn&&skipFn();
  $('study').classList.add('hide');$('setup').classList.remove('hide');
