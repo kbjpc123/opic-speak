@@ -148,42 +148,62 @@ function save(){
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
 $('env').textContent=SR?'이 브라우저는 음성 인식을 지원해요. 마이크 권한을 허용해주세요.':'이 브라우저는 음성 인식을 지원하지 않아요. 안드로이드 Chrome이나 아이폰 Safari에서 열어주세요.';
 
-let openSent=new Set();
+let openSent=new Set(),selected=new Set();
 const gsOf=p=>{try{return cacheGet(p)}catch(e){return []}};
 function render(){
- $('list').innerHTML='';
+ const box=$('list');box.innerHTML='';
  const vis=words.map((w,i)=>[w,i]).filter(([w])=>w.c===curCat);
- $('list').classList.toggle('hide',!listOpen);
+ box.classList.toggle('hide',!listOpen);
  $('toggle').textContent=(listOpen?'▲ 접기':'▼ 펼치기')+' · '+vis.length+'개';
- vis.forEach(([w,i])=>{
+ const keyOf=w=>w.p.trim().toLowerCase();
+ const small=b=>{b.style.cssText='padding:6px 10px;font-size:13px';return b};
+ const mk=(txt,cls,fn)=>{const b=document.createElement('button');b.className=cls;b.textContent=txt;b.onclick=fn;return small(b)};
+ if(vis.length){
+  const withS=vis.filter(([w])=>gsOf(w.p).length);
+  const allOpen=withS.length>0&&withS.every(([w])=>openSent.has(keyOf(w)));
+  const selN=vis.filter(([w])=>selected.has(keyOf(w))).length;
+  const bar=document.createElement('div');bar.className='row';bar.style.marginTop='0';
+  const b1=mk('예문 모두 '+(allOpen?'접기':'펼치기'),'sec',()=>{withS.forEach(([w])=>{allOpen?openSent.delete(keyOf(w)):openSent.add(keyOf(w))});render()});
+  b1.disabled=!withS.length;
+  const b2=mk(selN===vis.length?'선택 해제':'전체 선택','sec',()=>{vis.forEach(([w])=>{selN===vis.length?selected.delete(keyOf(w)):selected.add(keyOf(w))});render()});
+  const b3=mk('선택 삭제 ('+selN+')','',()=>{
+   const del=new Set(vis.filter(([w])=>selected.has(keyOf(w))).map(([w])=>keyOf(w)));
+   if(!del.size)return;
+   words=words.filter(w=>!(w.c===curCat&&del.has(keyOf(w))));
+   del.forEach(k=>{selected.delete(k);openSent.delete(k)});
+   save();renderAll();
+  });
+  b3.disabled=!selN;b3.style.background='#dc2626';
+  bar.append(b1,b2,b3);box.append(bar);
+ }
+ vis.forEach(([w])=>{
   const wrap=document.createElement('div');
   const d=document.createElement('div');d.className='w';d.style.flexWrap='wrap';
-  const s=document.createElement('span');s.textContent=w.p+(w.m?' — '+w.m:'');
-  const key=w.p.trim().toLowerCase(),gs=gsOf(w.p),cnt=gs.reduce((a,g)=>a+g.length,0);
-  const eb=document.createElement('button');eb.className='sec';eb.textContent='예문 '+cnt;eb.disabled=!cnt;
-  const panel=document.createElement('div');panel.className='hint';panel.style.cssText='padding:6px 4px 10px 12px';
-  const fillPanel=()=>{
-   panel.innerHTML='';
-   gs.forEach((g,gi)=>{
-    const h=document.createElement('div');h.style.cssText='font-weight:700;margin-top:6px';h.textContent='묶음 '+(gi+1);panel.append(h);
-    g.forEach(it=>{
-     const e=document.createElement('div');e.style.cssText='color:var(--tx);margin-top:4px';e.innerHTML=hl(it.en,it.target);
-     const k=document.createElement('div');k.textContent=it.ko;
-     panel.append(e,k);
-    });
-   });
-  };
+  const key=keyOf(w),gs=gsOf(w.p),cnt=gs.reduce((a,g)=>a+g.length,0);
   const show=openSent.has(key)&&cnt>0;
-  panel.classList.toggle('hide',!show);if(show)fillPanel();
-  eb.onclick=()=>{if(openSent.has(key))openSent.delete(key);else openSent.add(key);render()};
-  const b=document.createElement('button');b.className='sec';b.textContent='삭제';
-  b.onclick=()=>{words.splice(i,1);save();render()};
+  const tog=()=>{if(!cnt)return;if(openSent.has(key))openSent.delete(key);else openSent.add(key);render()};
+  const cb=document.createElement('input');cb.type='checkbox';cb.checked=selected.has(key);
+  cb.style.cssText='flex:none;min-width:0;width:20px;height:20px';
+  cb.onchange=()=>{if(cb.checked)selected.add(key);else selected.delete(key);render()};
+  const sp=document.createElement('span');sp.textContent=w.p+(w.m?' — '+w.m:'');
+  sp.style.cssText='flex:1;min-width:120px;cursor:'+(cnt?'pointer':'default');sp.onclick=tog;
+  const eb=document.createElement('button');eb.className='sec';eb.textContent='예문 '+cnt+(cnt?(show?' ▲':' ▼'):'');eb.disabled=!cnt;eb.onclick=tog;
   const sel=document.createElement('select');
   cats.forEach(c=>{const o=document.createElement('option');o.value=c.id;o.textContent=c.name;if(c.id===w.c)o.selected=true;sel.append(o)});
   sel.onchange=()=>{w.c=sel.value;save();renderAll()};
-  d.append(s,eb,sel,b);wrap.append(d,panel);$('list').append(wrap);
+  const panel=document.createElement('div');panel.className='hint';panel.style.cssText='padding:6px 4px 10px 32px';
+  panel.classList.toggle('hide',!show);
+  if(show)gs.forEach((g,gi)=>{
+   const h=document.createElement('div');h.style.cssText='font-weight:700;margin-top:6px';h.textContent='묶음 '+(gi+1);panel.append(h);
+   g.forEach(it=>{
+    const e=document.createElement('div');e.style.cssText='color:var(--tx);margin-top:4px';e.innerHTML=hl(it.en,it.target);
+    const k=document.createElement('div');k.textContent=it.ko;
+    panel.append(e,k);
+   });
+  });
+  d.append(cb,sp,eb,sel);wrap.append(d,panel);box.append(wrap);
  });
- if(!vis.length)$('list').innerHTML='<div class="hint">이 카테고리에는 아직 표현이 없어요.</div>';
+ if(!vis.length)box.innerHTML='<div class="hint">이 카테고리에는 아직 표현이 없어요.</div>';
 }
 
 $('add').onclick=()=>{
@@ -204,7 +224,7 @@ function renderCats(){
  cats.forEach(c=>{
   const b=document.createElement('button');b.className='chip'+(c.id===curCat?' on':'');
   b.textContent=c.name+' '+words.filter(w=>w.c===c.id).length;
-  b.onclick=()=>{curCat=c.id;renderAll()};box.append(b);
+  b.onclick=()=>{curCat=c.id;selected.clear();renderAll()};box.append(b);
  });
 }
 function renderScope(){
