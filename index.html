@@ -875,7 +875,7 @@ async function loop(id){
 }
 
 const runLoop=id=>lmode?listenLoop(id):loop(id);
-let lhist=[],lpos=0,lctl='',lExprOrder=[],lEi=0;
+let lhist=[],lpos=0,lctl='',lExprOrder=[],lEi=0,lGC=0;
 async function lsay(text,lang,id){
  for(;;){
   if(id!==runId)return 'cancel';
@@ -913,8 +913,10 @@ async function lmore(id){
   if(!g){$('status').textContent='문장을 만들지 못했어요: '+(lastErr||'알 수 없는 오류')+' — 다시 시도 버튼을 눌러보세요.';$('retry').classList.remove('hide');return false}
   w=pool.find(x=>dk(x.p)===dk(g.word));
  }
- if(lmode!=='sent')lhist.push({t:'e',word:g.word,ko:(w&&w.m)||''});
- if(lmode!=='expr')g.items.forEach((it,i)=>lhist.push({t:'s',word:g.word,it,i,n:g.items.length}));
+ const tt=Math.max(pool.length,1);lGC++;
+ const ord=(lGC-1)%tt+1,rnd=Math.floor((lGC-1)/tt)+1;
+ if(lmode!=='sent')lhist.push({t:'e',word:g.word,ko:(w&&w.m)||'',ord,rnd});
+ if(lmode!=='expr')g.items.forEach((it,i)=>lhist.push({t:'s',word:g.word,it,i,n:g.items.length,ord,rnd}));
  if(lhist.length>200){const k=lhist.length-200;lhist.splice(0,k);lpos=Math.max(0,lpos-k)}
  $('status').textContent='';
  return true;
@@ -952,8 +954,8 @@ async function listenLoop(id){
   if(lpos>=lhist.length){const ok=await lmore(id);if(ok===null||!ok)return;continue}
   const u=lhist[lpos];
   curWord=u.word;knownFlag=false;skipUsed=false;skipG=false;
-  const pos=Math.max(pool.findIndex(x=>dk(x.p)===dk(u.word)),0)+1;
-  $('prog').textContent='🎧 듣기 모드 · 표현 '+pos+' / '+tot;$('barfill').style.width=(pos/tot*100)+'%';
+  const pos=u.ord;
+  $('prog').textContent='🎧 듣기 모드 · 표현 '+pos+' / '+tot+(u.rnd>1?' · '+u.rnd+'회차':'');$('barfill').style.width=(pos/tot*100)+'%';
   renderPlist();$('tgt').textContent='';
   inGroup=true;let r;
   try{r=await playUnit(u,id)}finally{inGroup=false}
@@ -976,7 +978,7 @@ $('start').onclick=async()=>{
  }
  if(!lmode&&!cfgOk()&&(cfg.forceNew||pool.some(w=>!cacheGet(w.p).length))){$('env').textContent='먼저 "AI 설정"에서 모델과 API 키를 저장해주세요.';$('aiBox').open=true;return}
  round=1;jumpWord=null;lJump=null;skipG=false;curWord='';
- lhist=[];lpos=0;lctl='';lExprOrder=[];lEi=0;
+ lhist=[];lpos=0;lctl='';lExprOrder=[];lEi=0;lGC=0;
  let resetMsg='';
  if(lmode){doneWords=new Set();resetMsg='🎧 듣기 모드 — 연습 기록에는 반영되지 않아요'}
  else{
