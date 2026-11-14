@@ -203,7 +203,16 @@ function render(){
   const panel=document.createElement('div');panel.className='hint';panel.style.cssText='padding:6px 4px 10px 32px';
   panel.classList.toggle('hide',!show);
   if(show)gs.forEach((g,gi)=>{
-   const h=document.createElement('div');h.style.cssText='font-weight:700;margin-top:6px';h.textContent='묶음 '+(gi+1);panel.append(h);
+   const h=document.createElement('div');h.style.cssText='font-weight:700;margin-top:6px;display:flex;align-items:center;gap:8px';
+   const ht=document.createElement('span');ht.textContent='묶음 '+(gi+1);
+   const dbtn=document.createElement('button');dbtn.className='sec';dbtn.textContent='묶음 삭제';dbtn.style.cssText='padding:2px 8px;font-size:12px';
+   let armed=false;
+   dbtn.onclick=()=>{
+    if(!armed){armed=true;dbtn.textContent='정말 삭제?';dbtn.style.background='#dc2626';dbtn.style.color='#fff';setTimeout(()=>{armed=false;dbtn.textContent='묶음 삭제';dbtn.style.background='';dbtn.style.color=''},3000);return}
+    const e=sc[hk(w.p)];if(!e)return;
+    e.groups.splice(gi,1);e.t=Date.now();scSave();push();render();
+   };
+   h.append(ht,dbtn);panel.append(h);
    g.forEach(it=>{
     const e=document.createElement('div');e.style.cssText='color:var(--tx);margin-top:4px';e.innerHTML=hl(it.en,it.target);
     const k=document.createElement('div');k.textContent=it.ko;
@@ -379,7 +388,7 @@ let dbh=null,uidv=null;
 const maxg=()=>cfg.maxg||3,useIdx={};
 const hk=p=>{let h=5381;p=p.toLowerCase();for(let i=0;i<p.length;i++)h=((h<<5)+h+p.charCodeAt(i))|0;return 'k'+(h>>>0).toString(36)};
 let sc={};try{sc=JSON.parse(localStorage.getItem('opic_sents')||'{}')}catch(e){}
-const newer=(a,b)=>!a||b.groups.length>a.groups.length||(b.groups.length===a.groups.length&&(b.t||0)>(a.t||0));
+const newer=(a,b)=>!a||(b.t||0)>(a.t||0)||((b.t||0)===(a.t||0)&&b.groups.length>a.groups.length);
 const cacheGet=p=>(sc[hk(p)]&&sc[hk(p)].groups)||[];
 const scSave=()=>{try{localStorage.setItem('opic_sents',JSON.stringify(sc))}catch(e){}try{updateStored()}catch(e){}try{render()}catch(e){}};
 function updateStored(){const ks=Object.keys(sc);$('stored').textContent='저장된 문장: 표현 '+ks.length+'개 · 묶음 '+ks.reduce((a,k)=>a+sc[k].groups.length,0)+'개'}
@@ -564,14 +573,25 @@ Expressions:
 ${list}
 
 Make the 3 sentences for one expression clearly different from each other, and keep them simple.
-Return ONLY a JSON array, no other text, one object per expression: {"word": expression as given, "sentences": [3 objects, each {"en": English sentence, "ko": natural Korean translation, "target": the exact substring of "en" that contains the expression (inflection allowed, e.g. "ran out of")}]}.`);
+IMPORTANT: an expression may contain words fixed to one form, such as possessive pronouns (my/your/his/her/our/their, one's, someone's), reflexive pronouns (myself, themselves ...), or a plural/singular noun. Adapt those words so the sentence is grammatical and natural for its subject, and adjust verb agreement/tense. Example: the expression "make their own playlists" becomes "I usually make my own playlist" or "She makes her own playlists". Never leave a mismatched pronoun such as "I ... their own".
+Return ONLY a JSON array, no other text, one object per expression: {"word": expression as given, "sentences": [3 objects, each {"en": English sentence, "ko": natural Korean translation, "target": the exact substring of "en" that contains the expression exactly as written in your sentence, after adapting pronouns/inflection (e.g. "ran out of", "make my own playlist")}]}.`);
  const arr=Array.isArray(out)?out:((out&&(out.expressions||out.items||out.data||Object.values(out).find(Array.isArray)))||[]);
  const esc=t=>t.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
  const find=(en,t)=>{if(!t)return null;const i=en.toLowerCase().indexOf(String(t).toLowerCase());return i>=0?en.substr(i,String(t).length):null};
  const stemFind=(en,w)=>{const parts=String(w).split(/\s+/).filter(Boolean).map(t=>t.length>3?esc(t.slice(0,-1))+'\\w*':esc(t));if(!parts.length)return null;const m=en.match(new RegExp(parts.join('\\W+'),'i'));return m?m[0]:null};
+ const flexFind=(en,w)=>{
+  const parts=String(w).split(/\s+/).filter(Boolean).map(t=>{
+   const b=t.toLowerCase().replace(/[^a-z']/g,'');
+   if(/^(my|your|his|her|its|our|their|one's|someone's|somebody's|anyone's)$/.test(b))return "(?:my|your|his|her|its|our|their|\\w+'s)";
+   if(/^(myself|yourself|himself|herself|itself|ourselves|yourselves|themselves|oneself)$/.test(b))return '(?:myself|yourself|himself|herself|itself|ourselves|yourselves|themselves)';
+   return t.length>3?esc(t.slice(0,-1))+'\\w*':esc(t);
+  });
+  if(!parts.length)return null;
+  const m=en.match(new RegExp(parts.join('\\W+'),'i'));return m?m[0]:null;
+ };
  const gs=arr.map(g=>({word:g.word||'',items:(g.sentences||g.examples||[]).map(x=>{
    if(!x||!x.en||!x.ko)return null;
-   const t=find(x.en,x.target)||find(x.en,g.word)||stemFind(x.en,g.word||'');
+   const t=find(x.en,x.target)||find(x.en,g.word)||flexFind(x.en,g.word||'')||stemFind(x.en,g.word||'');
    return t?{en:x.en,ko:x.ko,target:t}:null;
  }).filter(Boolean).slice(0,3)})).filter(g=>g.items.length);
  if(!gs.length)throw new Error('AI 응답을 해석하지 못했어요: '+JSON.stringify(out).slice(0,150));
