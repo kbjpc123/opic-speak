@@ -581,9 +581,16 @@ async function qaPlayList(items){
 /* --- 화면 --- */
 function qaBlock(label,text){
  const blk=document.createElement('div');blk.style.cssText='margin:6px 0;padding:2px 4px';
- const lb=document.createElement('b');lb.textContent=label+' ';blk.append(lb);
- const ss=splitSents(text);
- ss.forEach((t,i)=>{const sp=document.createElement('span');sp.className='qs';sp.textContent=t+(i<ss.length-1?' ':'');sp.onclick=()=>qaPlayList([{text:t,el:sp}]);blk.append(sp)});
+ let first=true;
+ String(text).split('\n').forEach(line=>{
+  const row=document.createElement('div');
+  if(!line.trim()){row.style.height='0.7em';blk.append(row);return}
+  if(first){const lb=document.createElement('b');lb.textContent=label+' ';row.append(lb);first=false}
+  const ss=splitSents(line);
+  ss.forEach((t,i)=>{const sp=document.createElement('span');sp.className='qs';sp.textContent=t+(i<ss.length-1?' ':'');sp.onclick=()=>qaPlayList([{text:t,el:sp}]);row.append(sp)});
+  blk.append(row);
+ });
+ if(first){const row=document.createElement('div');const lb=document.createElement('b');lb.textContent=label;row.append(lb);blk.append(row)}
  return blk;
 }
 function renderQTopics(){
