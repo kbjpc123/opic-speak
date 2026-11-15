@@ -100,6 +100,8 @@ input{flex:1;min-width:120px}
   <p class="hint" style="margin-top:8px">질문·답변 듣기에 Gemini 음성 모델을 써요. 키는 Google AI Studio에서 받은 Gemini API 키예요. 비워두면 AI 설정의 키를 써요(AI를 Gemini로 골랐을 때).</p>
   <div class="row"><input id="ttskey" type="password" placeholder="Gemini API 키 (음성용)"></div>
   <div class="row"><input id="ttsmodel" list="ttslist" placeholder="TTS 모델명 (비우면 자동으로 찾아요)"><datalist id="ttslist"></datalist></div>
+  <div class="row"><label class="hint">음성 엔진 <select id="ttsengine"><option value="gemini">Gemini (고품질·토큰 사용)</option><option value="browser">브라우저 기본 음성 (무료)</option></select></label></div>
+  <div class="row"><label class="hint"><input type="checkbox" id="ttsfb" checked style="flex:none;min-width:0"> Gemini가 안 될 때 브라우저 음성으로 대신 읽기</label></div>
   <div class="row"><label class="hint">목소리 <select id="ttsvoice"><option>Kore</option><option>Puck</option><option>Charon</option><option>Fenrir</option><option>Aoede</option><option>Leda</option><option>Zephyr</option><option>Orus</option><option>Sulafat</option></select></label><button class="sec" id="ttspick">TTS 모델 찾기</button><button class="sec" id="ttsclear">저장된 음성 지우기</button></div>
   <div class="hint" id="ttsmsg"></div>
  </details>
@@ -157,6 +159,7 @@ input{flex:1;min-width:120px}
    <button id="qaplayall">▶ 전체 듣기</button>
    <label class="hint">속도 <select id="qaspeed"><option value="0.6">0.6×</option><option value="0.75">0.75×</option><option value="0.9">0.9×</option><option value="1" selected>1×</option><option value="1.15">1.15×</option><option value="1.3">1.3×</option><option value="1.5">1.5×</option><option value="1.75">1.75×</option></select></label>
    <label class="hint"><input type="checkbox" id="qaq" checked style="flex:none;min-width:0"> 질문도 읽기</label>
+   <button class="sec" id="qapregen">🎧 음성 미리 만들기</button>
   </div>
   <div class="hint" id="qamsg" style="margin-top:6px">문장을 누르면 그 문장만 재생돼요. 음성은 한 번 만들면 이 기기에 저장돼서 다음부터는 바로 나와요.</div>
  </div>
@@ -472,7 +475,8 @@ function armBtn(btn,fn){
 /* --- 음성(TTS) --- */
 const ttsKey=()=>cfg.ttsKey||(cfg.provider==='gemini'?cfg.key:'');
 const ttsMem=new Map();
-const idbOpen=()=>new Promise((res,rej)=>{const r=indexedDB.open('opic_tts',1);r.onupgradeneeded=()=>r.result.createObjectStore('a');r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});
+let idbP=null;
+const idbOpen=()=>idbP||(idbP=new Promise((res,rej)=>{const r=indexedDB.open('opic_tts',1);r.onupgradeneeded=()=>r.result.createObjectStore('a');r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)}).catch(e=>{idbP=null;throw e}));
 async function idbGet(k){try{const d=await idbOpen();return await new Promise(res=>{const q=d.transaction('a').objectStore('a').get(k);q.onsuccess=()=>res(q.result||null);q.onerror=()=>res(null)})}catch(e){return null}}
 async function idbSet(k,v){try{const d=await idbOpen();d.transaction('a','readwrite').objectStore('a').put(v,k)}catch(e){}}
 async function idbClear(){try{const d=await idbOpen();d.transaction('a','readwrite').objectStore('a').clear()}catch(e){}}
@@ -504,7 +508,8 @@ async function ttsModelName(){
 async function ttsFetch(model,voice,text){
  const key=ttsKey();if(!key)throw new Error('음성 설정에 Gemini API 키를 넣어주세요');
  let last='';
- for(let i=0;i<3;i++){
+ const tries=cfg.ttsFallback!==false?2:3;
+ for(let i=0;i<tries;i++){
   const r=await ft('https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(model)+':generateContent?key='+encodeURIComponent(key),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text}]}],generationConfig:{responseModalities:['AUDIO'],speechConfig:{voiceConfig:{prebuiltVoiceConfig:{voiceName:voice}}}}})});
   const j=await r.json();
   if(r.ok){
@@ -517,30 +522,33 @@ async function ttsFetch(model,voice,text){
    return pcmToWav(d.data,rate);
   }
   last=(j.error&&j.error.message)||String(r.status);
-  if(r.status===429||r.status>=500){$('qamsg').textContent='음성 서버가 바빠서 잠시 후 다시 시도해요 ('+(i+1)+'/3)';await new Promise(x=>setTimeout(x,3000*(i+1)));continue}
+  if(r.status===429||r.status>=500){$('qamsg').textContent='음성 서버가 바빠서 잠시 후 다시 시도해요 ('+(i+1)+'/'+tries+')';await new Promise(x=>setTimeout(x,2000*(i+1)));continue}
   break;
  }
  throw new Error(last);
 }
 function ttsGet(text){
- const p=(async()=>{
+ return (async()=>{
   const model=await ttsModelName(),voice=cfg.voice||'Kore';
   const k=model+'|'+voice+'|'+text;
-  if(ttsMem.has('b:'+k))return ttsMem.get('b:'+k);
-  const c=await idbGet(k);if(c){ttsMem.set('b:'+k,c);return c}
+  if(ttsMem.has('b:'+k)){const b=ttsMem.get('b:'+k);b._c=true;return b}
+  const c=await idbGet(k);if(c){c._c=true;ttsMem.set('b:'+k,c);return c}
   const blob=await ttsFetch(model,voice,text);
   ttsMem.set('b:'+k,blob);idbSet(k,blob);return blob;
  })();
- return p;
 }
 
 /* --- 재생 --- */
 const SILENT='data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
-let aud=null,qaId=0,qaPlayEl=null,qaPlaying=false;
-function qaUpdBtn(){$('qaplayall').textContent=qaPlaying?'⏹ 정지':'▶ 전체 듣기'}
+let aud=null,qaId=0,qaPlayEl=null,qaPlaying=false,qaOwner=null;const qaBtns=new Map();
+function qaUpdBtn(){
+ $('qaplayall').textContent=(qaPlaying&&qaOwner==='all')?'⏹ 정지':'▶ 전체 듣기';
+ qaBtns.forEach((b,id)=>{b.textContent=(qaPlaying&&qaOwner===id)?'⏹ 정지':'▶ 이 질문·답변'});
+}
 function qaStop(){
- qaId++;qaPlaying=false;
+ qaId++;qaPlaying=false;qaOwner=null;
  try{aud&&aud.pause()}catch(e){}
+ try{speechSynthesis.cancel()}catch(e){}
  if(qaPlayEl){qaPlayEl.classList.remove('qplay');qaPlayEl=null}
  qaUpdBtn();if(!studying)try{wakeOff()}catch(e){}
 }
@@ -553,29 +561,80 @@ function qaPlayBlob(blob,id){
   aud.play().catch(done);
  });
 }
-async function qaPlayList(items){
+let qaGeminiDown=0;
+function qaSpeakBrowser(text){
+ return new Promise(res=>{
+  try{
+   speechSynthesis.cancel();
+   const u=new SpeechSynthesisUtterance(text);u.lang='en-US';u.rate=Math.min(Math.max(+$('qaspeed').value||1,0.5),2);
+   const vs=speechSynthesis.getVoices();
+   const v=vs.find(x=>/^en[-_]US/i.test(x.lang))||vs.find(x=>/^en/i.test(x.lang));if(v)u.voice=v;
+   u.onend=u.onerror=()=>res();speechSynthesis.speak(u);
+  }catch(e){res()}
+ });
+}
+async function qaPlayList(items,owner){
  if(!aud)aud=new Audio();
  qaStop();
- const id=qaId;qaPlaying=true;qaUpdBtn();
+ const id=qaId;qaOwner=owner||null;qaPlaying=true;qaUpdBtn();
  try{aud.src=SILENT;aud.play().catch(()=>{})}catch(e){}
  try{wakeOn()}catch(e){}
- const pf=i=>{if(items[i]&&!items[i].p){items[i].p=ttsGet(items[i].text);items[i].p.catch(()=>{})}};
+ const eng=()=>(cfg.ttsEngine==='browser'||(qaGeminiDown&&Date.now()-qaGeminiDown<60000))?'browser':'gemini';
+ const pf=i=>{if(eng()==='gemini'&&items[i]&&!items[i].p){items[i].p=ttsGet(items[i].text);items[i].p.catch(()=>{})}};
  pf(0);pf(1);pf(2);
+ let note='';
  for(let i=0;i<items.length&&id===qaId;i++){
-  const it=items[i];
+  const it=items[i],head='🔊 '+(i+1)+'/'+items.length;
   if(qaPlayEl)qaPlayEl.classList.remove('qplay');
   qaPlayEl=it.el;if(qaPlayEl)qaPlayEl.classList.add('qplay');
-  $('qamsg').textContent='🔊 '+(i+1)+'/'+items.length;
-  let blob;
-  try{blob=await it.p}catch(e){if(id===qaId){$('qamsg').textContent='음성을 만들지 못했어요: '+((e&&e.message)||e);qaStop()}return}
+  let mode=eng(),blob=null;
+  if(mode==='gemini'){
+   $('qamsg').textContent=head+' · 음성 준비 중…';
+   try{if(!it.p){it.p=ttsGet(it.text);it.p.catch(()=>{})}blob=await it.p}
+   catch(e){
+    if(id!==qaId)return;
+    const why=(e&&e.message)||String(e);
+    if(cfg.ttsFallback!==false){qaGeminiDown=Date.now();mode='browser';note='Gemini 음성을 쓸 수 없어 브라우저 음성으로 읽어요: '+why}
+    else{$('qamsg').textContent='음성을 만들지 못했어요: '+why;qaStop();return}
+   }
+  }
   if(id!==qaId)return;
-  pf(i+3);
-  $('qamsg').textContent='🔊 '+(i+1)+'/'+items.length;
-  await qaPlayBlob(blob,id);
+  if(mode==='gemini'){
+   pf(i+3);
+   $('qamsg').textContent=head+(blob&&blob._c?' · 저장된 음성':' · 새로 만든 음성');
+   await qaPlayBlob(blob,id);
+  }else{
+   $('qamsg').textContent=head+' · 브라우저 음성'+(note?' ('+note+')':'');
+   await qaSpeakBrowser(it.text);
+  }
   if(id!==qaId)return;
   await new Promise(x=>setTimeout(x,250));
  }
- if(id===qaId){qaStop();$('qamsg').textContent='재생이 끝났어요.'}
+ if(id===qaId){qaStop();$('qamsg').textContent='재생이 끝났어요.'+(note?' ('+note+')':'')}
+}
+
+/* --- 음성 미리 만들기 (재생 전에 저장) --- */
+let qaPre=false;
+async function qaPregen(){
+ if(qaPre){qaPre=false;return}
+ if(cfg.ttsEngine==='browser'){$('qamsg').textContent='브라우저 음성은 미리 만들 필요가 없어요. (음성 설정에서 엔진을 Gemini로 바꾸면 미리 만들 수 있어요)';return}
+ const vis=qa.pairs.filter(p=>qaCur==='all'||p.t===qaCur);
+ const texts=[...new Set(vis.flatMap(p=>[$('qaq').checked?p.q:'',p.a]).filter(Boolean))];
+ if(!texts.length){$('qamsg').textContent='만들 질문·답변이 없어요.';return}
+ qaPre=true;$('qapregen').textContent='⏹ 만들기 멈춤';
+ let done=0,made=0,fail=0,err='';const q=texts.slice();
+ const upd=()=>{$('qamsg').textContent='🎧 음성 미리 만드는 중… '+done+'/'+texts.length+(fail?' (실패 '+fail+')':'')};
+ upd();
+ const worker=async()=>{
+  while(q.length&&qaPre){
+   const t=q.shift();
+   try{const b=await ttsGet(t);if(!b._c)made++}catch(e){fail++;err=(e&&e.message)||String(e);if(fail>=3)q.length=0}
+   done++;upd();
+  }
+ };
+ await Promise.all([worker(),worker()]);
+ const stopped=!qaPre;qaPre=false;$('qapregen').textContent='🎧 음성 미리 만들기';
+ $('qamsg').textContent=(stopped?'멈췄어요. ':'끝났어요. ')+'새로 만든 음성 '+made+'개, 이미 저장돼 있던 것 '+(done-made-fail)+'개'+(fail?', 실패 '+fail+'개 — '+err:'')+'.';
 }
 
 /* --- 화면 --- */
@@ -587,7 +646,7 @@ function qaBlock(label,text){
   if(!line.trim()){row.style.height='0.7em';blk.append(row);return}
   if(first){const lb=document.createElement('b');lb.textContent=label+' ';row.append(lb);first=false}
   const ss=splitSents(line);
-  ss.forEach((t,i)=>{const sp=document.createElement('span');sp.className='qs';sp.textContent=t+(i<ss.length-1?' ':'');sp.onclick=()=>qaPlayList([{text:t,el:sp}]);row.append(sp)});
+  ss.forEach((t,i)=>{const sp=document.createElement('span');sp.className='qs';sp.textContent=t+(i<ss.length-1?' ':'');sp.onclick=()=>{if(qaPlaying&&qaOwner===sp){qaStop();$('qamsg').textContent='정지했어요.';return}qaPlayList([{text:t,el:sp}],sp)};row.append(sp)});
   blk.append(row);
  });
  if(first){const row=document.createElement('div');const lb=document.createElement('b');lb.textContent=label;row.append(lb);blk.append(row)}
@@ -600,10 +659,10 @@ function renderQTopics(){
  qa.topics.forEach(t=>mk(t.id,t.name,qa.pairs.filter(p=>p.t===t.id).length));
 }
 function renderQA(){
- ensureQA();renderQTopics();
+ ensureQA();renderQTopics();qaBtns.clear();
  const box=$('qalist');box.innerHTML='';
  const vis=qa.pairs.filter(p=>qaCur==='all'||p.t===qaCur);
- if(!vis.length){box.innerHTML='<div class="hint" style="padding:8px">이 주제에는 아직 질문·답변이 없어요.</div>';return}
+ if(!vis.length){box.innerHTML='<div class="hint" style="padding:8px">이 주제에는 아직 질문·답변이 없어요.</div>';qaUpdBtn();return}
  vis.forEach(p=>{
   const card=document.createElement('div');card.className='card';
   if(qaEditing===p.id){
@@ -620,16 +679,21 @@ function renderQA(){
   if(qaCur==='all'){const tn=document.createElement('div');tn.className='hint';tn.textContent='주제: '+((qa.topics.find(t=>t.id===p.t)||{}).name||'');card.append(tn)}
   const row=document.createElement('div');row.className='row';
   const pb=document.createElement('button');pb.className='sec';pb.textContent='▶ 이 질문·답변';
-  pb.onclick=()=>qaPlayList(($('qaq').checked?[{text:p.q,el:qb}]:[]).concat([{text:p.a,el:ab}]));
+  qaBtns.set(p.id,pb);
+  pb.onclick=()=>{
+   if(qaPlaying&&qaOwner===p.id){qaStop();$('qamsg').textContent='정지했어요.';return}
+   qaPlayList(($('qaq').checked?[{text:p.q,el:qb}]:[]).concat([{text:p.a,el:ab}]),p.id);
+  };
   const eb=document.createElement('button');eb.className='sec';eb.textContent='✏️ 수정';eb.onclick=()=>{qaStop();qaEditing=p.id;renderQA()};
   const db=document.createElement('button');db.className='sec';db.textContent='🗑 삭제';
   armBtn(db,()=>{qa.pairs=qa.pairs.filter(x=>x.id!==p.id);qaSave();renderQA()});
   [pb,eb,db].forEach(b=>b.style.cssText='padding:6px 10px;font-size:13px');
   row.append(pb,eb,db);card.append(row);box.append(card);
  });
+ qaUpdBtn();
 }
 $('qaplayall').onclick=()=>{
- if(qaPlaying){qaStop();$('qamsg').textContent='정지했어요.';return}
+ if(qaPlaying&&qaOwner==='all'){qaStop();$('qamsg').textContent='정지했어요.';return}
  const vis=qa.pairs.filter(p=>qaCur==='all'||p.t===qaCur);
  if(!vis.length){$('qamsg').textContent='들을 질문·답변이 없어요.';return}
  const blocks=[...$('qalist').children];
@@ -639,7 +703,7 @@ $('qaplayall').onclick=()=>{
   if($('qaq').checked)items.push({text:p.q,el:kids[0]});
   items.push({text:p.a,el:kids[1]});
  });
- qaPlayList(items);
+ qaPlayList(items,'all');
 };
 $('qtadd').onclick=()=>{const n=$('qtname').value.trim();if(!n)return;const t={id:qaUid(),name:n};qa.topics.push(t);qaCur=t.id;$('qtname').value='';qaSave();renderQA()};
 $('qtren').onclick=()=>{
@@ -659,7 +723,10 @@ $('qaadd').onclick=()=>{
  qa.pairs.push({id:qaUid(),t:qaCur==='all'?qa.topics[0].id:qaCur,q,a});
  $('qnew').value='';$('anew').value='';$('qaaddmsg').textContent='저장했어요.';qaSave();renderQA();
 };
-const saveCfgQ=()=>{try{localStorage.setItem('opic_cfg',JSON.stringify(cfg))}catch(e){}};
+const saveCfgQ=()=>{qaGeminiDown=0;try{localStorage.setItem('opic_cfg',JSON.stringify(cfg))}catch(e){}};
+$('ttsengine').onchange=()=>{cfg.ttsEngine=$('ttsengine').value;saveCfgQ()};
+$('ttsfb').onchange=()=>{cfg.ttsFallback=$('ttsfb').checked;saveCfgQ()};
+$('qapregen').onclick=qaPregen;
 $('ttskey').onchange=()=>{cfg.ttsKey=$('ttskey').value.trim();saveCfgQ()};
 $('ttsmodel').onchange=()=>{cfg.ttsModel=$('ttsmodel').value.trim();saveCfgQ()};
 $('ttsvoice').onchange=()=>{cfg.voice=$('ttsvoice').value;saveCfgQ()};
@@ -762,7 +829,7 @@ showSync();connect();
 let cfg={provider:'gemini',key:'',model:'gemini-flash-latest',base:'http://localhost:11434/v1'};
 try{Object.assign(cfg,JSON.parse(localStorage.getItem('opic_cfg')||'{}'))}catch(e){}
 const MODELS={gemini:'gemini-flash-latest',anthropic:'claude-haiku-5-5',openai:'llama3.1'};
-function cfgUI(){$('ttskey').value=cfg.ttsKey||'';$('ttsmodel').value=cfg.ttsModel||'';$('ttsvoice').value=cfg.voice||'Kore';$('qaspeed').value=String(cfg.qaSpeed||1);$('qaq').checked=cfg.qaQ!==false;$('mode').value=cfg.mode||'';$('autogenchk').checked=cfg.autogen!==false;$('lenient').value=String(cfg.lenient==null?1:cfg.lenient);$('forcenew').checked=!!cfg.forceNew;$('beepchk').checked=cfg.beep!==false;updateStored();$('prov').value=cfg.provider;$('key').value=cfg.key;$('model').value=cfg.model;$('base').value=cfg.base;$('baseRow').classList.toggle('hide',cfg.provider!=='openai')}
+function cfgUI(){$('ttsengine').value=cfg.ttsEngine||'gemini';$('ttsfb').checked=cfg.ttsFallback!==false;$('ttskey').value=cfg.ttsKey||'';$('ttsmodel').value=cfg.ttsModel||'';$('ttsvoice').value=cfg.voice||'Kore';$('qaspeed').value=String(cfg.qaSpeed||1);$('qaq').checked=cfg.qaQ!==false;$('mode').value=cfg.mode||'';$('autogenchk').checked=cfg.autogen!==false;$('lenient').value=String(cfg.lenient==null?1:cfg.lenient);$('forcenew').checked=!!cfg.forceNew;$('beepchk').checked=cfg.beep!==false;updateStored();$('prov').value=cfg.provider;$('key').value=cfg.key;$('model').value=cfg.model;$('base').value=cfg.base;$('baseRow').classList.toggle('hide',cfg.provider!=='openai')}
 $('prov').onchange=()=>{cfg.provider=$('prov').value;cfg.model=MODELS[cfg.provider];cfgUI()};
 $('cfgsave').onclick=()=>{cfg.key=$('key').value.trim();cfg.model=$('model').value.trim();cfg.base=$('base').value.trim();cfg.forceNew=$('forcenew').checked;cfg.beep=$('beepchk').checked;cfg.autogen=$('autogenchk').checked;cfg.lenient=+$('lenient').value;try{localStorage.setItem('opic_cfg',JSON.stringify(cfg))}catch(e){}$('cfgmsg').textContent='저장했어요.'};
 const cfgOk=()=>(cfg.provider==='openai'?!!(cfg.base&&cfg.model):!!(cfg.key&&cfg.model));
