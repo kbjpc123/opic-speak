@@ -682,6 +682,7 @@ async function qaPregen(){
  const texts=[...new Set(vis.flatMap(p=>[$('qaq').checked?p.q:'',p.a]).filter(Boolean))];
  if(!texts.length){$('qamsg').textContent='만들 질문·답변이 없어요.';return}
  qaPre=true;$('qapregen').textContent='⏹ 만들기 멈춤';
+ try{wakeOn()}catch(e){}
  let done=0,made=0,fail=0,err='';const q=texts.slice();
  const upd=()=>{$('qamsg').textContent='🎧 음성 미리 만드는 중… '+done+'/'+texts.length+(fail?' (실패 '+fail+')':'')};
  upd();
@@ -694,6 +695,7 @@ async function qaPregen(){
  };
  await Promise.all([worker(),worker()]);
  const stopped=!qaPre;qaPre=false;$('qapregen').textContent='🎧 음성 미리 만들기';
+ if(!studying&&!qaPlaying)try{wakeOff()}catch(e){}
  $('qamsg').textContent=(stopped?'멈췄어요. ':'끝났어요. ')+'새로 만든 음성 '+made+'개, 이미 저장돼 있던 것 '+(done-made-fail)+'개'+(fail?', 실패 '+fail+'개 — '+err:'')+'.';
 }
 
