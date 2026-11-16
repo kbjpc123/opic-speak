@@ -100,8 +100,16 @@ input{flex:1;min-width:120px}
   <p class="hint" style="margin-top:8px">질문·답변 듣기에 Gemini 음성 모델을 써요. 키는 Google AI Studio에서 받은 Gemini API 키예요. 비워두면 AI 설정의 키를 써요(AI를 Gemini로 골랐을 때).</p>
   <div class="row"><input id="ttskey" type="password" placeholder="Gemini API 키 (음성용)"></div>
   <div class="row"><input id="ttsmodel" list="ttslist" placeholder="TTS 모델명 (비우면 자동으로 찾아요)"><datalist id="ttslist"></datalist></div>
-  <div class="row"><label class="hint">음성 엔진 <select id="ttsengine"><option value="gemini">Gemini (고품질·토큰 사용)</option><option value="browser">브라우저 기본 음성 (무료)</option></select></label></div>
-  <div class="row"><label class="hint"><input type="checkbox" id="ttsfb" checked style="flex:none;min-width:0"> Gemini가 안 될 때 브라우저 음성으로 대신 읽기</label></div>
+  <div class="row"><label class="hint">음성 엔진 <select id="ttsengine"><option value="gemini">Gemini (고품질·토큰 사용)</option><option value="kokoro">내 기기에서 직접 만들기 (Kokoro·무료·오프라인)</option><option value="server">내 PC의 TTS 서버 (OpenAI 호환·무료)</option><option value="browser">브라우저 기본 음성 (무료·가장 가벼움)</option></select></label></div>
+  <details style="margin-top:8px"><summary class="hint" style="cursor:pointer">내 기기/PC에서 음성 만들기 설정</summary>
+   <p class="hint" style="margin-top:8px">Kokoro: 폰이든 PC든 브라우저 안에서 음성을 만들어요. 처음 한 번 약 90MB를 내려받고, 이후에는 인터넷 없이 쓸 수 있어요. 만든 음성은 이 기기에 저장돼요.</p>
+   <div class="row"><label class="hint">Kokoro 목소리 <select id="kvoice"><option value="af_heart">af_heart (미국 여성)</option><option value="af_bella">af_bella (미국 여성)</option><option value="af_nicole">af_nicole (미국 여성)</option><option value="af_sarah">af_sarah (미국 여성)</option><option value="am_adam">am_adam (미국 남성)</option><option value="am_michael">am_michael (미국 남성)</option><option value="bf_emma">bf_emma (영국 여성)</option><option value="bm_george">bm_george (영국 남성)</option></select></label></div>
+   <div class="row"><input id="kurl" placeholder="Kokoro 라이브러리 주소 (비우면 기본값)"></div>
+   <p class="hint">PC 서버: Kokoro-FastAPI 같은 OpenAI 호환 TTS 서버를 PC에서 켜두면 연결할 수 있어요. 같은 PC 브라우저에서만 쓸 수 있어요.</p>
+   <div class="row"><input id="tbase" placeholder="서버 주소 (예: http://localhost:8880/v1)"></div>
+   <div class="row"><input id="tsmodel" placeholder="모델명 (예: kokoro)"><input id="tsvoice" placeholder="목소리 (예: af_heart)"></div>
+  </details>
+  <div class="row"><label class="hint"><input type="checkbox" id="ttsfb" checked style="flex:none;min-width:0"> 선택한 음성이 안 될 때 브라우저 음성으로 대신 읽기</label></div>
   <div class="row"><label class="hint">목소리 <select id="ttsvoice"><option>Kore</option><option>Puck</option><option>Charon</option><option>Fenrir</option><option>Aoede</option><option>Leda</option><option>Zephyr</option><option>Orus</option><option>Sulafat</option></select></label><button class="sec" id="ttspick">TTS 모델 찾기</button><button class="sec" id="ttsclear">저장된 음성 지우기</button></div>
   <div class="hint" id="ttsmsg"></div>
  </details>
@@ -527,13 +535,65 @@ async function ttsFetch(model,voice,text){
  }
  throw new Error(last);
 }
+function f32ToWav(f32,rate){
+ const n=f32.length,buf=new ArrayBuffer(44+n*2),v=new DataView(buf);
+ const w=(o,t)=>{for(let i=0;i<t.length;i++)v.setUint8(o+i,t.charCodeAt(i))};
+ w(0,'RIFF');v.setUint32(4,36+n*2,true);w(8,'WAVE');w(12,'fmt ');v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);
+ v.setUint32(24,rate,true);v.setUint32(28,rate*2,true);v.setUint16(32,2,true);v.setUint16(34,16,true);w(36,'data');v.setUint32(40,n*2,true);
+ for(let i=0;i<n;i++)v.setInt16(44+i*2,Math.round(Math.max(-1,Math.min(1,f32[i]))*32767),true);
+ return new Blob([buf],{type:'audio/wav'});
+}
+const KURL='https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/+esm';
+let kokoroImport=()=>import(cfg.kurl||KURL);
+let kokoroP=null,kokoroChain=Promise.resolve();
+async function kokoroLoad(){
+ if(kokoroP)return kokoroP;
+ kokoroP=(async()=>{
+  $('qamsg').textContent='🧠 음성 모델 준비 중… (처음 한 번만 내려받아요)';
+  const mod=await kokoroImport();
+  const KT=mod.KokoroTTS||(mod.default&&mod.default.KokoroTTS);
+  if(!KT)throw new Error('Kokoro 라이브러리를 불러오지 못했어요');
+  return KT.from_pretrained('onnx-community/Kokoro-82M-v1.0-ONNX',{dtype:'q8',device:'wasm',progress_callback:p=>{if(p&&p.status==='progress'&&typeof p.progress==='number')$('qamsg').textContent='🧠 음성 모델 내려받는 중… '+Math.round(p.progress)+'% (처음 한 번만)'}});
+ })().catch(e=>{kokoroP=null;throw e});
+ return kokoroP;
+}
+function kokoroSynth(text,voice){
+ const job=kokoroChain.then(async()=>{
+  const tts=await kokoroLoad();
+  const chunks=[];let cur='';
+  splitSents(text).forEach(x=>{if(cur&&(cur+' '+x).length>280){chunks.push(cur);cur=x}else cur=cur?cur+' '+x:x});
+  if(cur)chunks.push(cur);
+  const parts=[];let rate=24000;
+  for(const c of chunks){
+   const a=await tts.generate(c,{voice});
+   if(!a||!a.audio)throw new Error('음성 모델 응답 형식이 달라요');
+   parts.push(a.audio);rate=a.sampling_rate||rate;
+  }
+  const all=new Float32Array(parts.reduce((n,p)=>n+p.length,0));let o=0;
+  parts.forEach(p=>{all.set(p,o);o+=p.length});
+  return f32ToWav(all,rate);
+ });
+ kokoroChain=job.catch(()=>{});
+ return job;
+}
+async function serverSynth(text,model,voice){
+ const base=(cfg.tBase||'').replace(/\/$/,'');
+ if(!base)throw new Error('음성 설정에 서버 주소를 넣어주세요');
+ const r=await ft(base+'/audio/speech',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model,input:text,voice,response_format:'wav'})});
+ if(!r.ok){let m=r.status;try{const j=await r.json();m=(j.error&&(j.error.message||j.error))||j.detail||m}catch(e){}throw new Error('서버 오류: '+m)}
+ return await r.blob();
+}
 function ttsGet(text){
  return (async()=>{
-  const model=await ttsModelName(),voice=cfg.voice||'Kore';
-  const k=model+'|'+voice+'|'+text;
+  const e=cfg.ttsEngine||'gemini';
+  let model,voice;
+  if(e==='kokoro'){model='kokoro-82m';voice=cfg.kvoice||'af_heart'}
+  else if(e==='server'){model=cfg.tsModel||'server';voice=cfg.tsVoice||'af_heart'}
+  else{model=await ttsModelName();voice=cfg.voice||'Kore'}
+  const k=(e==='gemini'?'':e+'|')+model+'|'+voice+'|'+text;
   if(ttsMem.has('b:'+k)){const b=ttsMem.get('b:'+k);b._c=true;return b}
   const c=await idbGet(k);if(c){c._c=true;ttsMem.set('b:'+k,c);return c}
-  const blob=await ttsFetch(model,voice,text);
+  const blob=e==='kokoro'?await kokoroSynth(text,voice):e==='server'?await serverSynth(text,model,voice):await ttsFetch(model,voice,text);
   ttsMem.set('b:'+k,blob);idbSet(k,blob);return blob;
  })();
 }
@@ -594,7 +654,7 @@ async function qaPlayList(items,owner){
    catch(e){
     if(id!==qaId)return;
     const why=(e&&e.message)||String(e);
-    if(cfg.ttsFallback!==false){qaGeminiDown=Date.now();mode='browser';note='Gemini 음성을 쓸 수 없어 브라우저 음성으로 읽어요: '+why}
+    if(cfg.ttsFallback!==false){qaGeminiDown=Date.now();mode='browser';note='선택한 음성을 쓸 수 없어 브라우저 음성으로 읽어요: '+why}
     else{$('qamsg').textContent='음성을 만들지 못했어요: '+why;qaStop();return}
    }
   }
@@ -617,7 +677,7 @@ async function qaPlayList(items,owner){
 let qaPre=false;
 async function qaPregen(){
  if(qaPre){qaPre=false;return}
- if(cfg.ttsEngine==='browser'){$('qamsg').textContent='브라우저 음성은 미리 만들 필요가 없어요. (음성 설정에서 엔진을 Gemini로 바꾸면 미리 만들 수 있어요)';return}
+ if(cfg.ttsEngine==='browser'){$('qamsg').textContent='브라우저 음성은 미리 만들 필요가 없어요. (음성 설정에서 엔진을 바꾸면 미리 만들 수 있어요)';return}
  const vis=qa.pairs.filter(p=>qaCur==='all'||p.t===qaCur);
  const texts=[...new Set(vis.flatMap(p=>[$('qaq').checked?p.q:'',p.a]).filter(Boolean))];
  if(!texts.length){$('qamsg').textContent='만들 질문·답변이 없어요.';return}
@@ -725,6 +785,11 @@ $('qaadd').onclick=()=>{
 };
 const saveCfgQ=()=>{qaGeminiDown=0;try{localStorage.setItem('opic_cfg',JSON.stringify(cfg))}catch(e){}};
 $('ttsengine').onchange=()=>{cfg.ttsEngine=$('ttsengine').value;saveCfgQ()};
+$('kvoice').onchange=()=>{cfg.kvoice=$('kvoice').value;saveCfgQ()};
+$('kurl').onchange=()=>{cfg.kurl=$('kurl').value.trim();kokoroP=null;saveCfgQ()};
+$('tbase').onchange=()=>{cfg.tBase=$('tbase').value.trim();saveCfgQ()};
+$('tsmodel').onchange=()=>{cfg.tsModel=$('tsmodel').value.trim();saveCfgQ()};
+$('tsvoice').onchange=()=>{cfg.tsVoice=$('tsvoice').value.trim();saveCfgQ()};
 $('ttsfb').onchange=()=>{cfg.ttsFallback=$('ttsfb').checked;saveCfgQ()};
 $('qapregen').onclick=qaPregen;
 $('ttskey').onchange=()=>{cfg.ttsKey=$('ttskey').value.trim();saveCfgQ()};
@@ -829,7 +894,7 @@ showSync();connect();
 let cfg={provider:'gemini',key:'',model:'gemini-flash-latest',base:'http://localhost:11434/v1'};
 try{Object.assign(cfg,JSON.parse(localStorage.getItem('opic_cfg')||'{}'))}catch(e){}
 const MODELS={gemini:'gemini-flash-latest',anthropic:'claude-haiku-5-5',openai:'llama3.1'};
-function cfgUI(){$('ttsengine').value=cfg.ttsEngine||'gemini';$('ttsfb').checked=cfg.ttsFallback!==false;$('ttskey').value=cfg.ttsKey||'';$('ttsmodel').value=cfg.ttsModel||'';$('ttsvoice').value=cfg.voice||'Kore';$('qaspeed').value=String(cfg.qaSpeed||1);$('qaq').checked=cfg.qaQ!==false;$('mode').value=cfg.mode||'';$('autogenchk').checked=cfg.autogen!==false;$('lenient').value=String(cfg.lenient==null?1:cfg.lenient);$('forcenew').checked=!!cfg.forceNew;$('beepchk').checked=cfg.beep!==false;updateStored();$('prov').value=cfg.provider;$('key').value=cfg.key;$('model').value=cfg.model;$('base').value=cfg.base;$('baseRow').classList.toggle('hide',cfg.provider!=='openai')}
+function cfgUI(){$('kvoice').value=cfg.kvoice||'af_heart';$('kurl').value=cfg.kurl||'';$('tbase').value=cfg.tBase||'';$('tsmodel').value=cfg.tsModel||'';$('tsvoice').value=cfg.tsVoice||'';$('ttsengine').value=cfg.ttsEngine||'gemini';$('ttsfb').checked=cfg.ttsFallback!==false;$('ttskey').value=cfg.ttsKey||'';$('ttsmodel').value=cfg.ttsModel||'';$('ttsvoice').value=cfg.voice||'Kore';$('qaspeed').value=String(cfg.qaSpeed||1);$('qaq').checked=cfg.qaQ!==false;$('mode').value=cfg.mode||'';$('autogenchk').checked=cfg.autogen!==false;$('lenient').value=String(cfg.lenient==null?1:cfg.lenient);$('forcenew').checked=!!cfg.forceNew;$('beepchk').checked=cfg.beep!==false;updateStored();$('prov').value=cfg.provider;$('key').value=cfg.key;$('model').value=cfg.model;$('base').value=cfg.base;$('baseRow').classList.toggle('hide',cfg.provider!=='openai')}
 $('prov').onchange=()=>{cfg.provider=$('prov').value;cfg.model=MODELS[cfg.provider];cfgUI()};
 $('cfgsave').onclick=()=>{cfg.key=$('key').value.trim();cfg.model=$('model').value.trim();cfg.base=$('base').value.trim();cfg.forceNew=$('forcenew').checked;cfg.beep=$('beepchk').checked;cfg.autogen=$('autogenchk').checked;cfg.lenient=+$('lenient').value;try{localStorage.setItem('opic_cfg',JSON.stringify(cfg))}catch(e){}$('cfgmsg').textContent='저장했어요.'};
 const cfgOk=()=>(cfg.provider==='openai'?!!(cfg.base&&cfg.model):!!(cfg.key&&cfg.model));
