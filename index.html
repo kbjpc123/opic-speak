@@ -850,34 +850,54 @@ function qaBlock(label,text,opt){
   const v=opt.pair[opt.field==='q'?'qk':'ak'];
   if(qaTrBusy.has(opt.key))tr.textContent='번역을 만드는 중…';
   else if(v)String(v).split('\n').forEach(l=>{const d=document.createElement('div');if(l.trim())d.textContent=l;else d.style.height='0.6em';tr.append(d)});
+  else if(qaTrErr.has(opt.key)){tr.textContent='⚠️ 번역을 만들지 못했어요: '+qaTrErr.get(opt.key)+' (접었다가 다시 펼치면 다시 시도해요)';tr.style.color='#dc2626'}
   else tr.textContent=text.trim()?'번역이 아직 없어요. "번역 모두 만들기"를 누르거나 ✏️ 수정에서 직접 넣을 수 있어요.':'(내용 없음)';
   blk.append(tr);
  }
  return blk;
 }
 /* --- 번역 (AI로 만들어 저장) --- */
+const qaTrErr=new Map();
+function parseTr(text){
+ const res={};let cur=null;
+ String(text).split('\n').forEach(line=>{
+  if(/^\s*```/.test(line)){cur=null;return}
+  const m=line.match(/^\s*#{2,4}\s*([^|\s#]+)\s*\|\s*([QA])\s*$/i);
+  if(m){cur=m[1]+'|'+m[2].toUpperCase();res[cur]=[];return}
+  if(cur)res[cur].push(line);
+ });
+ Object.keys(res).forEach(k=>{res[k]=res[k].join('\n').trim()});
+ return res;
+}
 async function qaTranslate(jobs){
- const items=jobs.map(j=>{const o={id:j.p.id};j.fields.forEach(f=>{o[f]=j.p[f]});return o});
- jobs.forEach(j=>j.fields.forEach(f=>qaTrBusy.add(j.p.id+':'+f)));
+ const blocks=[];
+ jobs.forEach(j=>j.fields.forEach(f=>blocks.push({p:j.p,f,key:j.p.id+':'+f,tf:f==='q'?'qk':'ak'})));
+ blocks.forEach(b=>{qaTrBusy.add(b.key);qaTrErr.delete(b.key)});
  try{
-  let out;
-  try{out=await llmJson('Translate the following OPIc English interview questions and answers into natural, spoken Korean.\nRules: keep the same line breaks (every newline and blank line in the English must appear at the same place in the Korean); add no explanations.\nInput is a JSON array of objects with "id" and the fields "q" (question) and/or "a" (answer). Return ONLY a JSON array of objects with the same "id" and only the same fields; each value is the Korean translation string.\nINPUT: '+JSON.stringify(items));}catch(e){if(/JSON|Unexpected/i.test((e&&e.message)||''))throw new Error('AI 응답을 해석하지 못했어요 (다시 시도해주세요)');throw e}
-  const arr=Array.isArray(out)?out:[];
+  const prompt='Translate every block below from English into natural, spoken Korean (OPIc interview style).\nFormat: each block starts with a header line "### <id>|Q" or "### <id>|A". Output the same headers in the same order, each followed by ONLY the Korean translation of that block. Keep the same line breaks and blank lines as the English. No explanations and no other markdown.\n\n'+blocks.map(b=>'### '+b.p.id+'|'+b.f.toUpperCase()+'\n'+b.p[b.f]).join('\n\n');
+  const text=await llmJson(prompt,true,6000);
+  const res=parseTr(text);
   let got=0;
-  jobs.forEach(j=>{
-   const r=arr.find(x=>x&&String(x.id)===String(j.p.id));if(!r)return;
-   j.fields.forEach(f=>{if(typeof r[f]==='string'&&r[f].trim()){j.p[f==='q'?'qk':'ak']=r[f].trim();got++}});
+  blocks.forEach(b=>{
+   let v=res[b.p.id+'|'+b.f.toUpperCase()];
+   if(!v&&blocks.length===1){const t=String(text).replace(/```[a-z]*\n?/gi,'').replace(/^\s*#{2,4}.*\|[QA]\s*$/im,'').trim();if(t&&/[가-힣]/.test(t)&&!/^(죄송|미안|번역할 수 없|I'?m sorry|Sorry|I cannot|I can't)/i.test(t))v=t}
+   if(v){b.p[b.tf]=v;got++}
   });
-  if(!got)throw new Error('번역 결과를 읽지 못했어요');
+  if(!got)throw new Error('번역 결과를 읽지 못했어요 (AI 응답: '+String(text).slice(0,60).replace(/\n/g,' ')+')');
   qaSave();
- }finally{jobs.forEach(j=>j.fields.forEach(f=>qaTrBusy.delete(j.p.id+':'+f)))}
+  blocks.filter(b=>!b.p[b.tf]).forEach(b=>qaTrErr.set(b.key,'번역 결과에서 빠졌어요. 접었다가 다시 펼치면 다시 시도해요.'));
+ }catch(e){
+  const m=(e&&e.message)||String(e);
+  blocks.forEach(b=>qaTrErr.set(b.key,m));
+  throw e;
+ }finally{blocks.forEach(b=>qaTrBusy.delete(b.key))}
 }
 async function qaToggleTr(p,field,key){
  if(qaTrOpen.has(key)){qaTrOpen.delete(key);renderQA();return}
  qaTrOpen.add(key);
  const tf=field==='q'?'qk':'ak';
  if(!p[tf]&&p[field]&&p[field].trim()){
-  if(!cfgOk()){$('qamsg').textContent='번역을 만들려면 ⚙️ 설정에서 AI 설정이 필요해요. (✏️ 수정에서 직접 넣을 수도 있어요)';renderQA();return}
+  if(!cfgOk()){const m='번역을 만들려면 ⚙️ 설정에서 AI 설정이 필요해요. (✏️ 수정에서 직접 넣을 수도 있어요)';qaTrErr.set(key,m);$('qamsg').textContent=m;renderQA();return}
   $('qamsg').textContent='🇰🇷 번역 만드는 중…';
   const jobs=[{p,fields:[field]}];
   const pend=qaTranslate(jobs);renderQA();
@@ -1142,9 +1162,9 @@ $('autogenchk').onchange=()=>{cfg.autogen=$('autogenchk').checked;try{localStora
 $('beepchk').onchange=()=>{cfg.beep=$('beepchk').checked;try{localStorage.setItem('opic_cfg',JSON.stringify(cfg))}catch(e){}};
 const THINK=[{thinkingBudget:0},{thinkingLevel:'minimal'},null];
 let thinkIdx=0;
-async function geminiCall(model,prompt){
+async function geminiCall(model,prompt,raw){
  for(;;){
-  const used=thinkIdx,gc={responseMimeType:'application/json'};
+  const used=thinkIdx,gc=raw?{}:{responseMimeType:'application/json'};
   if(THINK[used])gc.thinkingConfig=THINK[used];
   const r=await ft('https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(model)+':generateContent?key='+encodeURIComponent(cfg.key),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:gc})});
   const j=await r.json();
@@ -1177,34 +1197,37 @@ async function ft(url,opt){
  catch(e){throw new Error(e&&e.name==='AbortError'?'AI 응답 시간 초과('+Math.round(aiTimeout/1000)+'초)':'AI 서버에 연결하지 못했어요: '+((e&&e.message)||e))}
  finally{clearTimeout(t)}
 }
-async function llmJson(prompt){
+async function llmJson(prompt,raw,maxTok){
  let text='',r,j;
  if(cfg.provider==='gemini'){
   const msg=o=>(o.j&&o.j.error&&o.j.error.message)||'';
   const bad=o=>!o.r.ok&&(/high demand|overload|unavailable|try again/i.test(msg(o))||[429,500,503,504].includes(o.r.status));
-  let o=await geminiCall(cfg.model,prompt);
+  let o=await geminiCall(cfg.model,prompt,raw);
   if(!o.r.ok&&/no longer available|not found|not supported/i.test(msg(o))){
    const p=await pickGemini();
-   if(p.best){cfg.model=p.best;$('model').value=p.best;try{localStorage.setItem('opic_cfg',JSON.stringify(cfg))}catch(e){}o=await geminiCall(cfg.model,prompt)}
+   if(p.best){cfg.model=p.best;$('model').value=p.best;try{localStorage.setItem('opic_cfg',JSON.stringify(cfg))}catch(e){}o=await geminiCall(cfg.model,prompt,raw)}
   }
-  for(let i=0;i<3&&bad(o);i++){await new Promise(r=>setTimeout(r,1500*(i+1)));o=await geminiCall(cfg.model,prompt)}
+  for(let i=0;i<3&&bad(o);i++){await new Promise(r=>setTimeout(r,1500*(i+1)));o=await geminiCall(cfg.model,prompt,raw)}
   if(bad(o)){
    const p=await pickGemini().catch(()=>null);
    const alts=p?p.alts.filter(n=>n!==cfg.model).sort((a,b)=>(/lite/.test(b)-/lite/.test(a))).slice(0,4):[];
-   for(const m of alts){o=await geminiCall(m,prompt);if(o.r.ok)break}
+   for(const m of alts){o=await geminiCall(m,prompt,raw);if(o.r.ok)break}
   }
   if(!o.r.ok)throw new Error(msg(o)||o.r.status);
-  text=o.j.candidates[0].content.parts.map(p=>p.text||'').join('');
+  const cand=((o.j&&o.j.candidates)||[])[0];
+  if(!cand||!cand.content||!cand.content.parts)throw new Error('AI가 답을 주지 않았어요'+(cand&&cand.finishReason?' ('+cand.finishReason+')':'')+(o.j&&o.j.promptFeedback&&o.j.promptFeedback.blockReason?' ('+o.j.promptFeedback.blockReason+')':''));
+  text=cand.content.parts.map(p=>p.text||'').join('');
  }else if(cfg.provider==='anthropic'){
-  r=await ft('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':cfg.key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:cfg.model,max_tokens:2000,messages:[{role:'user',content:prompt}]})});
+  r=await ft('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':cfg.key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:cfg.model,max_tokens:maxTok||2000,messages:[{role:'user',content:prompt}]})});
   j=await r.json();if(!r.ok)throw new Error((j.error&&j.error.message)||r.status);
   text=j.content.map(c=>c.text||'').join('');
  }else{
   const h={'Content-Type':'application/json'};if(cfg.key)h.Authorization='Bearer '+cfg.key;
-  r=await ft(cfg.base.replace(/\/$/,'')+'/chat/completions',{method:'POST',headers:h,body:JSON.stringify({model:cfg.model,messages:[{role:'user',content:prompt}]})});
+  r=await ft(cfg.base.replace(/\/$/,'')+'/chat/completions',{method:'POST',headers:h,body:JSON.stringify(Object.assign({model:cfg.model,messages:[{role:'user',content:prompt}]},maxTok?{max_tokens:maxTok}:{}))});
   j=await r.json();if(!r.ok)throw new Error((j.error&&j.error.message)||r.status);
   text=j.choices[0].message.content;
  }
+ if(raw)return text;
  const m=text.match(/\[[\s\S]*\]/);return JSON.parse(m?m[0]:text);
 }
 /* ---------- 문장 생성 ---------- */
