@@ -133,8 +133,22 @@ input{flex:1;min-width:120px}
    <button class="sec" id="qapregen">🎧 음성 미리 만들기</button>
    <button class="sec" id="qatrtoggle">🇰🇷 번역 모두 펼치기</button>
    <button class="sec" id="qatrall">🇰🇷 번역 모두 만들기</button>
+   <button class="sec" id="qarandom">🎲 랜덤 질문</button>
   </div>
   <div class="hint" id="qamsg" style="margin-top:6px">문장을 누르면 그 문장만 재생돼요. 음성은 한 번 만들면 이 기기에 저장돼서 다음부터는 바로 나와요.</div>
+ </div>
+ <div class="card hide" id="qarand">
+  <div class="row" style="margin-top:0;align-items:center"><b>🎲 랜덤 질문 연습</b><span class="hint" id="qrinfo"></span></div>
+  <div id="qrq" style="margin-top:8px"></div>
+  <div id="qra" class="hide" style="margin-top:8px"></div>
+  <div class="row">
+   <button id="qrplay">🔁 다시 듣기</button>
+   <button class="sec" id="qrnext">🎲 다음 질문</button>
+   <button class="sec" id="qrans">👀 답변 보기</button>
+   <button class="sec hide" id="qrplaya">▶ 답변 듣기</button>
+   <button class="sec" id="qrclose">닫기</button>
+  </div>
+  <label class="hint"><input type="checkbox" id="qrhide" style="flex:none;min-width:0"> 질문 글자 숨기고 듣기만</label>
  </div>
  <div id="qalist"></div>
 </section>
@@ -723,6 +737,8 @@ function ttsGet(text){
 const SILENT='data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
 let aud=null,qaId=0,qaPlayEl=null,qaPlaying=false,qaOwner=null;const qaBtns=new Map();
 function qaUpdBtn(){
+ const rb=$('qrplay');if(rb)rb.textContent=(qaPlaying&&qaOwner==='rand')?'⏹ 정지':'🔁 다시 듣기';
+ const ra=$('qrplaya');if(ra)ra.textContent=(qaPlaying&&qaOwner==='randA')?'⏹ 정지':'▶ 답변 듣기';
  $('qaplayall').textContent=(qaPlaying&&qaOwner==='all')?'⏹ 정지':'▶ 전체 듣기';
  qaBtns.forEach((b,id)=>{b.textContent=(qaPlaying&&qaOwner===id)?'⏹ 정지':'▶ 이 질문·답변'});
 }
@@ -875,7 +891,7 @@ async function qaTranslate(jobs){
  blocks.forEach(b=>{qaTrBusy.add(b.key);qaTrErr.delete(b.key)});
  try{
   const prompt='Translate every block below from English into natural, spoken Korean (OPIc interview style).\nFormat: each block starts with a header line "### <id>|Q" or "### <id>|A". Output the same headers in the same order, each followed by ONLY the Korean translation of that block. Keep the same line breaks and blank lines as the English. No explanations and no other markdown.\n\n'+blocks.map(b=>'### '+b.p.id+'|'+b.f.toUpperCase()+'\n'+b.p[b.f]).join('\n\n');
-  const text=await llmJson(prompt,true,6000);
+  const text=await llmJson(prompt,true,6000,240000);
   const res=parseTr(text);
   let got=0;
   blocks.forEach(b=>{
@@ -887,9 +903,10 @@ async function qaTranslate(jobs){
   qaSave();
   blocks.filter(b=>!b.p[b.tf]).forEach(b=>qaTrErr.set(b.key,'번역 결과에서 빠졌어요. 접었다가 다시 펼치면 다시 시도해요.'));
  }catch(e){
-  const m=(e&&e.message)||String(e);
+  let m=(e&&e.message)||String(e);
+  if(/시간 초과/.test(m))m+=' — AI 응답이 느려요. ⚙️ 설정에서 더 빠른 모델(flash-lite 등)로 바꿔보세요';
   blocks.forEach(b=>qaTrErr.set(b.key,m));
-  throw e;
+  throw new Error(m);
  }finally{blocks.forEach(b=>qaTrBusy.delete(b.key))}
 }
 async function qaToggleTr(p,field,key){
@@ -910,15 +927,31 @@ async function qaTranslateAll(){
  const jobs=vis.map(p=>({p,fields:['q','a'].filter(f=>p[f]&&p[f].trim()&&!p[f==='q'?'qk':'ak'])})).filter(j=>j.fields.length);
  if(!jobs.length){$('qamsg').textContent='번역이 필요한 질문·답변이 없어요. (이미 모두 있어요)';return}
  if(!cfgOk()){$('qamsg').textContent='번역을 만들려면 AI 설정이 필요해요.';openSettings();return}
+ const chunks=[];let cur=[],len=0;
+ jobs.forEach(j=>{
+  const l=j.fields.reduce((n,f)=>n+j.p[f].length,0);
+  if(cur.length&&(cur.length>=2||len+l>1200)){chunks.push(cur);cur=[];len=0}
+  cur.push(j);len+=l;
+ });
+ if(cur.length)chunks.push(cur);
  let done=0,fail=0,err='';
- for(let i=0;i<jobs.length;i+=3){
-  const chunk=jobs.slice(i,i+3);
-  const m='🇰🇷 번역 만드는 중… '+done+'/'+jobs.length;$('qamsg').textContent=m;$('bgmsg').textContent=m;
-  try{await qaTranslate(chunk);done+=chunk.length;renderQA()}
-  catch(e){fail+=chunk.length;err=(e&&e.message)||String(e);if(fail>=6)break}
- }
+ const upd=()=>{const m='🇰🇷 번역 만드는 중… '+done+'/'+jobs.length+(fail?' (실패 '+fail+')':'');$('qamsg').textContent=m;$('bgmsg').textContent=m};
+ upd();
+ const runChunk=async ch=>{
+  try{await qaTranslate(ch);done+=ch.length}
+  catch(e){
+   const msg=(e&&e.message)||String(e);
+   if(ch.length>1&&/시간 초과/.test(msg)){
+    for(const j of ch){try{await qaTranslate([j]);done++}catch(e2){fail++;err=(e2&&e2.message)||String(e2)}}
+   }else{fail+=ch.length;err=msg}
+  }
+  upd();renderQA();
+ };
+ const q=chunks.slice();
+ const worker=async()=>{while(q.length&&fail<6)await runChunk(q.shift())};
+ await Promise.all([worker(),worker()]);
  $('bgmsg').textContent='';
- $('qamsg').textContent='번역 만들기 끝: '+done+'개'+(fail?', 실패 '+fail+'개 — '+err+' (다시 누르면 없는 것만 다시 시도해요)':'');
+ $('qamsg').textContent='번역 만들기 끝: '+done+'/'+jobs.length+'개'+(fail?', 실패 '+fail+'개 — '+err+' (다시 누르면 없는 것만 다시 시도해요)':'');
  renderQA();
 }
 const qaSentMode=()=>(cfg.ttsEngine||'gemini')!=='gemini';
@@ -928,7 +961,7 @@ function qaItemsOf(blk,text){
 }
 function renderQTopics(){
  const box=$('qtopics');box.innerHTML='';
- const mk=(id,name,n)=>{const b=document.createElement('button');b.className='chip'+(qaCur===id?' on':'');b.textContent=name+' '+n;b.onclick=()=>{qaStop();qaCur=id;qaEditing=null;renderQA()};box.append(b)};
+ const mk=(id,name,n)=>{const b=document.createElement('button');b.className='chip'+(qaCur===id?' on':'');b.textContent=name+' '+n;b.onclick=()=>{qaStop();qaCur=id;qaEditing=null;$('qarand').classList.add('hide');renderQA()};box.append(b)};
  mk('all','전체',qa.pairs.length);
  qa.topics.forEach(t=>mk(t.id,t.name,qa.pairs.filter(p=>p.t===t.id).length));
 }
@@ -985,6 +1018,48 @@ $('qatrtoggle').onclick=()=>{
  keys.forEach(k=>{if(all)qaTrOpen.delete(k);else qaTrOpen.add(k)});renderQA();
 };
 $('qatrall').onclick=qaTranslateAll;
+/* --- 랜덤 질문 연습 (선택한 주제에서 무작위로, 다 돌 때까지 중복 없이) --- */
+let qrBag=[],qrBagKey='',qrCur=null,qrQB=null,qrAB=null;
+function qaRandNext(){
+ const vis=qa.pairs.filter(p=>(qaCur==='all'||p.t===qaCur)&&p.q&&p.q.trim());
+ if(!vis.length){$('qamsg').textContent='이 주제에는 들을 질문이 없어요.';return}
+ const key=qaCur+'|'+vis.map(p=>p.id).join(',');
+ if(key!==qrBagKey||!qrBag.length){
+  qrBag=shuffle(vis.map(p=>p.id));qrBagKey=key;
+  if(qrCur&&qrBag.length>1&&qrBag[0]===qrCur.id)qrBag.push(qrBag.shift());
+ }
+ const nid=qrBag.shift();
+ const p=vis.find(x=>x.id===nid);
+ qrCur=p;
+ qrQB=qaBlock('Q.',p.q);qrAB=null;
+ $('qrq').innerHTML='';$('qrq').append(qrQB);$('qrq').classList.toggle('hide',$('qrhide').checked);
+ $('qra').innerHTML='';$('qra').classList.add('hide');$('qrplaya').classList.add('hide');$('qrans').textContent='👀 답변 보기';
+ const tn=qaCur==='all'?'전체':((qa.topics.find(t=>t.id===qaCur)||{}).name||'');
+ $('qrinfo').textContent=' '+tn+' · 이번 바퀴 남은 질문 '+qrBag.length+'개';
+ $('qarand').classList.remove('hide');
+ qaPlayList(qaItemsOf(qrQB,p.q),'rand');
+}
+$('qarandom').onclick=qaRandNext;
+$('qrnext').onclick=qaRandNext;
+$('qrplay').onclick=()=>{
+ if(!qrCur)return;
+ if(qaPlaying&&qaOwner==='rand'){qaStop();return}
+ qaPlayList(qaItemsOf(qrQB,qrCur.q),'rand');
+};
+$('qrans').onclick=()=>{
+ if(!qrCur)return;
+ const open=!$('qra').classList.contains('hide');
+ if(open){$('qra').classList.add('hide');$('qrplaya').classList.add('hide');$('qrans').textContent='👀 답변 보기';return}
+ if(!qrAB){qrAB=qaBlock('A.',qrCur.a);$('qra').innerHTML='';$('qra').append(qrAB)}
+ $('qra').classList.remove('hide');$('qrplaya').classList.remove('hide');$('qrans').textContent='🙈 답변 숨기기';
+};
+$('qrplaya').onclick=()=>{
+ if(!qrCur||!qrAB)return;
+ if(qaPlaying&&qaOwner==='randA'){qaStop();return}
+ qaPlayList(qaItemsOf(qrAB,qrCur.a),'randA');
+};
+$('qrhide').onchange=()=>{$('qrq').classList.toggle('hide',$('qrhide').checked)};
+$('qrclose').onclick=()=>{qaStop();$('qarand').classList.add('hide')};
 $('qaplayall').onclick=()=>{
  if(qaPlaying&&qaOwner==='all'){qaStop();$('qamsg').textContent='정지했어요.';return}
  const vis=qa.pairs.filter(p=>qaCur==='all'||p.t===qaCur);
@@ -1162,11 +1237,11 @@ $('autogenchk').onchange=()=>{cfg.autogen=$('autogenchk').checked;try{localStora
 $('beepchk').onchange=()=>{cfg.beep=$('beepchk').checked;try{localStorage.setItem('opic_cfg',JSON.stringify(cfg))}catch(e){}};
 const THINK=[{thinkingBudget:0},{thinkingLevel:'minimal'},null];
 let thinkIdx=0;
-async function geminiCall(model,prompt,raw){
+async function geminiCall(model,prompt,raw,ms){
  for(;;){
   const used=thinkIdx,gc=raw?{}:{responseMimeType:'application/json'};
   if(THINK[used])gc.thinkingConfig=THINK[used];
-  const r=await ft('https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(model)+':generateContent?key='+encodeURIComponent(cfg.key),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:gc})});
+  const r=await ft('https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(model)+':generateContent?key='+encodeURIComponent(cfg.key),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({contents:[{parts:[{text:prompt}]}],generationConfig:gc})},ms);
   const j=await r.json();
   if(!r.ok&&r.status===400&&/think/i.test((j.error&&j.error.message)||'')&&used<THINK.length-1){if(thinkIdx===used)thinkIdx++;continue}
   return {r,j};
@@ -1191,39 +1266,39 @@ $('modelload').onclick=async()=>{
  }catch(e){$('cfgmsg').textContent='실패: '+e.message}
 };
 let aiTimeout=60000;
-async function ft(url,opt){
- const c=new AbortController(),t=setTimeout(()=>c.abort(),aiTimeout);
+async function ft(url,opt,ms){
+ const lim=ms||aiTimeout,c=new AbortController(),t=setTimeout(()=>c.abort(),lim);
  try{return await fetch(url,{...opt,signal:c.signal})}
- catch(e){throw new Error(e&&e.name==='AbortError'?'AI 응답 시간 초과('+Math.round(aiTimeout/1000)+'초)':'AI 서버에 연결하지 못했어요: '+((e&&e.message)||e))}
+ catch(e){throw new Error(e&&e.name==='AbortError'?'AI 응답 시간 초과('+Math.round(lim/1000)+'초)':'AI 서버에 연결하지 못했어요: '+((e&&e.message)||e))}
  finally{clearTimeout(t)}
 }
-async function llmJson(prompt,raw,maxTok){
+async function llmJson(prompt,raw,maxTok,ms){
  let text='',r,j;
  if(cfg.provider==='gemini'){
   const msg=o=>(o.j&&o.j.error&&o.j.error.message)||'';
   const bad=o=>!o.r.ok&&(/high demand|overload|unavailable|try again/i.test(msg(o))||[429,500,503,504].includes(o.r.status));
-  let o=await geminiCall(cfg.model,prompt,raw);
+  let o=await geminiCall(cfg.model,prompt,raw,ms);
   if(!o.r.ok&&/no longer available|not found|not supported/i.test(msg(o))){
    const p=await pickGemini();
-   if(p.best){cfg.model=p.best;$('model').value=p.best;try{localStorage.setItem('opic_cfg',JSON.stringify(cfg))}catch(e){}o=await geminiCall(cfg.model,prompt,raw)}
+   if(p.best){cfg.model=p.best;$('model').value=p.best;try{localStorage.setItem('opic_cfg',JSON.stringify(cfg))}catch(e){}o=await geminiCall(cfg.model,prompt,raw,ms)}
   }
-  for(let i=0;i<3&&bad(o);i++){await new Promise(r=>setTimeout(r,1500*(i+1)));o=await geminiCall(cfg.model,prompt,raw)}
+  for(let i=0;i<3&&bad(o);i++){await new Promise(r=>setTimeout(r,1500*(i+1)));o=await geminiCall(cfg.model,prompt,raw,ms)}
   if(bad(o)){
    const p=await pickGemini().catch(()=>null);
    const alts=p?p.alts.filter(n=>n!==cfg.model).sort((a,b)=>(/lite/.test(b)-/lite/.test(a))).slice(0,4):[];
-   for(const m of alts){o=await geminiCall(m,prompt,raw);if(o.r.ok)break}
+   for(const m of alts){o=await geminiCall(m,prompt,raw,ms);if(o.r.ok)break}
   }
   if(!o.r.ok)throw new Error(msg(o)||o.r.status);
   const cand=((o.j&&o.j.candidates)||[])[0];
   if(!cand||!cand.content||!cand.content.parts)throw new Error('AI가 답을 주지 않았어요'+(cand&&cand.finishReason?' ('+cand.finishReason+')':'')+(o.j&&o.j.promptFeedback&&o.j.promptFeedback.blockReason?' ('+o.j.promptFeedback.blockReason+')':''));
   text=cand.content.parts.map(p=>p.text||'').join('');
  }else if(cfg.provider==='anthropic'){
-  r=await ft('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':cfg.key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:cfg.model,max_tokens:maxTok||2000,messages:[{role:'user',content:prompt}]})});
+  r=await ft('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','x-api-key':cfg.key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:cfg.model,max_tokens:maxTok||2000,messages:[{role:'user',content:prompt}]})},ms);
   j=await r.json();if(!r.ok)throw new Error((j.error&&j.error.message)||r.status);
   text=j.content.map(c=>c.text||'').join('');
  }else{
   const h={'Content-Type':'application/json'};if(cfg.key)h.Authorization='Bearer '+cfg.key;
-  r=await ft(cfg.base.replace(/\/$/,'')+'/chat/completions',{method:'POST',headers:h,body:JSON.stringify(Object.assign({model:cfg.model,messages:[{role:'user',content:prompt}]},maxTok?{max_tokens:maxTok}:{}))});
+  r=await ft(cfg.base.replace(/\/$/,'')+'/chat/completions',{method:'POST',headers:h,body:JSON.stringify(Object.assign({model:cfg.model,messages:[{role:'user',content:prompt}]},maxTok?{max_tokens:maxTok}:{}))},ms);
   j=await r.json();if(!r.ok)throw new Error((j.error&&j.error.message)||r.status);
   text=j.choices[0].message.content;
  }
