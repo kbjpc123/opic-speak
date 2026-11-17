@@ -36,6 +36,7 @@ button:disabled{opacity:.5}
 @keyframes p{50%{transform:scale(1.08)}}
 .center{display:flex;flex-direction:column;align-items:center;gap:10px}
 .hide{display:none}
+.qtr{margin:4px 0 6px 12px;padding-left:8px;border-left:3px solid var(--bd);color:var(--mu);font-size:14px}
 .qs{cursor:pointer;border-radius:4px}
 .qs:hover{background:var(--bd)}
 .qplay{background:rgba(79,70,229,.18);border-radius:6px}
@@ -130,6 +131,8 @@ input{flex:1;min-width:120px}
    <label class="hint">속도 <select id="qaspeed"><option value="0.6">0.6×</option><option value="0.75">0.75×</option><option value="0.9">0.9×</option><option value="1" selected>1×</option><option value="1.15">1.15×</option><option value="1.3">1.3×</option><option value="1.5">1.5×</option><option value="1.75">1.75×</option></select></label>
    <label class="hint"><input type="checkbox" id="qaq" checked style="flex:none;min-width:0"> 질문도 읽기</label>
    <button class="sec" id="qapregen">🎧 음성 미리 만들기</button>
+   <button class="sec" id="qatrtoggle">🇰🇷 번역 모두 펼치기</button>
+   <button class="sec" id="qatrall">🇰🇷 번역 모두 만들기</button>
   </div>
   <div class="hint" id="qamsg" style="margin-top:6px">문장을 누르면 그 문장만 재생돼요. 음성은 한 번 만들면 이 기기에 저장돼서 다음부터는 바로 나와요.</div>
  </div>
@@ -819,20 +822,84 @@ async function qaPregen(){
 }
 
 /* --- 화면 --- */
-function qaBlock(label,text){
+let qaTrOpen=new Set();const qaTrBusy=new Set();
+function qaBlock(label,text,opt){
  const blk=document.createElement('div');blk.style.cssText='margin:6px 0;padding:2px 4px';
  blk._sp=[];
  let first=true;
+ const addLabel=row=>{
+  const lb=document.createElement('b');lb.textContent=label+' ';row.append(lb);
+  if(opt){
+   const tb=document.createElement('button');tb.className='sec';tb.style.cssText='padding:1px 8px;font-size:12px;margin-right:6px';
+   tb.textContent=qaTrOpen.has(opt.key)?'한글 ▲':'한글 ▼';
+   tb.onclick=()=>qaToggleTr(opt.pair,opt.field,opt.key);
+   row.append(tb);
+  }
+ };
  String(text).split('\n').forEach(line=>{
   const row=document.createElement('div');
   if(!line.trim()){row.style.height='0.7em';blk.append(row);return}
-  if(first){const lb=document.createElement('b');lb.textContent=label+' ';row.append(lb);first=false}
+  if(first){addLabel(row);first=false}
   const ss=splitSents(line);
   ss.forEach((t,i)=>{const sp=document.createElement('span');sp.className='qs';sp.textContent=t+(i<ss.length-1?' ':'');sp.onclick=()=>{if(qaPlaying&&qaOwner===sp){qaStop();$('qamsg').textContent='정지했어요.';return}qaPlayList([{text:t,el:sp}],sp)};blk._sp.push({t,sp});row.append(sp)});
   blk.append(row);
  });
- if(first){const row=document.createElement('div');const lb=document.createElement('b');lb.textContent=label;row.append(lb);blk.append(row)}
+ if(first){const row=document.createElement('div');addLabel(row);blk.append(row)}
+ if(opt&&qaTrOpen.has(opt.key)){
+  const tr=document.createElement('div');tr.className='qtr';
+  const v=opt.pair[opt.field==='q'?'qk':'ak'];
+  if(qaTrBusy.has(opt.key))tr.textContent='번역을 만드는 중…';
+  else if(v)String(v).split('\n').forEach(l=>{const d=document.createElement('div');if(l.trim())d.textContent=l;else d.style.height='0.6em';tr.append(d)});
+  else tr.textContent=text.trim()?'번역이 아직 없어요. "번역 모두 만들기"를 누르거나 ✏️ 수정에서 직접 넣을 수 있어요.':'(내용 없음)';
+  blk.append(tr);
+ }
  return blk;
+}
+/* --- 번역 (AI로 만들어 저장) --- */
+async function qaTranslate(jobs){
+ const items=jobs.map(j=>{const o={id:j.p.id};j.fields.forEach(f=>{o[f]=j.p[f]});return o});
+ jobs.forEach(j=>j.fields.forEach(f=>qaTrBusy.add(j.p.id+':'+f)));
+ try{
+  let out;
+  try{out=await llmJson('Translate the following OPIc English interview questions and answers into natural, spoken Korean.\nRules: keep the same line breaks (every newline and blank line in the English must appear at the same place in the Korean); add no explanations.\nInput is a JSON array of objects with "id" and the fields "q" (question) and/or "a" (answer). Return ONLY a JSON array of objects with the same "id" and only the same fields; each value is the Korean translation string.\nINPUT: '+JSON.stringify(items));}catch(e){if(/JSON|Unexpected/i.test((e&&e.message)||''))throw new Error('AI 응답을 해석하지 못했어요 (다시 시도해주세요)');throw e}
+  const arr=Array.isArray(out)?out:[];
+  let got=0;
+  jobs.forEach(j=>{
+   const r=arr.find(x=>x&&String(x.id)===String(j.p.id));if(!r)return;
+   j.fields.forEach(f=>{if(typeof r[f]==='string'&&r[f].trim()){j.p[f==='q'?'qk':'ak']=r[f].trim();got++}});
+  });
+  if(!got)throw new Error('번역 결과를 읽지 못했어요');
+  qaSave();
+ }finally{jobs.forEach(j=>j.fields.forEach(f=>qaTrBusy.delete(j.p.id+':'+f)))}
+}
+async function qaToggleTr(p,field,key){
+ if(qaTrOpen.has(key)){qaTrOpen.delete(key);renderQA();return}
+ qaTrOpen.add(key);
+ const tf=field==='q'?'qk':'ak';
+ if(!p[tf]&&p[field]&&p[field].trim()){
+  if(!cfgOk()){$('qamsg').textContent='번역을 만들려면 ⚙️ 설정에서 AI 설정이 필요해요. (✏️ 수정에서 직접 넣을 수도 있어요)';renderQA();return}
+  $('qamsg').textContent='🇰🇷 번역 만드는 중…';
+  const jobs=[{p,fields:[field]}];
+  const pend=qaTranslate(jobs);renderQA();
+  try{await pend;$('qamsg').textContent='번역을 저장했어요.'}catch(e){$('qamsg').textContent='번역을 만들지 못했어요: '+((e&&e.message)||e)}
+ }
+ renderQA();
+}
+async function qaTranslateAll(){
+ const vis=qa.pairs.filter(p=>qaCur==='all'||p.t===qaCur);
+ const jobs=vis.map(p=>({p,fields:['q','a'].filter(f=>p[f]&&p[f].trim()&&!p[f==='q'?'qk':'ak'])})).filter(j=>j.fields.length);
+ if(!jobs.length){$('qamsg').textContent='번역이 필요한 질문·답변이 없어요. (이미 모두 있어요)';return}
+ if(!cfgOk()){$('qamsg').textContent='번역을 만들려면 AI 설정이 필요해요.';openSettings();return}
+ let done=0,fail=0,err='';
+ for(let i=0;i<jobs.length;i+=3){
+  const chunk=jobs.slice(i,i+3);
+  const m='🇰🇷 번역 만드는 중… '+done+'/'+jobs.length;$('qamsg').textContent=m;$('bgmsg').textContent=m;
+  try{await qaTranslate(chunk);done+=chunk.length;renderQA()}
+  catch(e){fail+=chunk.length;err=(e&&e.message)||String(e);if(fail>=6)break}
+ }
+ $('bgmsg').textContent='';
+ $('qamsg').textContent='번역 만들기 끝: '+done+'개'+(fail?', 실패 '+fail+'개 — '+err+' (다시 누르면 없는 것만 다시 시도해요)':'');
+ renderQA();
 }
 const qaSentMode=()=>(cfg.ttsEngine||'gemini')!=='gemini';
 function qaItemsOf(blk,text){
@@ -849,19 +916,25 @@ function renderQA(){
  ensureQA();renderQTopics();qaBtns.clear();
  const box=$('qalist');box.innerHTML='';
  const vis=qa.pairs.filter(p=>qaCur==='all'||p.t===qaCur);
- if(!vis.length){box.innerHTML='<div class="hint" style="padding:8px">이 주제에는 아직 질문·답변이 없어요.</div>';qaUpdBtn();return}
+ if(!vis.length){box.innerHTML='<div class="hint" style="padding:8px">이 주제에는 아직 질문·답변이 없어요.</div>';qaUpdBtn();qaUpdTr();return}
  vis.forEach(p=>{
   const card=document.createElement('div');card.className='card';
   if(qaEditing===p.id){
-   const q=document.createElement('textarea');q.value=p.q;q.style.minHeight='60px';
-   const a=document.createElement('textarea');a.value=p.a;a.style.cssText='min-height:120px;margin-top:8px';
+   const mkTa=(v,h,ph,mt)=>{const t=document.createElement('textarea');t.value=v||'';t.style.cssText='min-height:'+h+'px;margin-top:'+mt+'px';t.placeholder=ph;return t};
+   const q=mkTa(p.q,60,'질문',0),qk=mkTa(p.qk,40,'질문 한글 번역 (비워두면 번역 버튼을 누를 때 AI가 만들어요)',6);
+   const a=mkTa(p.a,120,'답변',10),ak=mkTa(p.ak,80,'답변 한글 번역 (비워두면 번역 버튼을 누를 때 AI가 만들어요)',6);
    const row=document.createElement('div');row.className='row';
    const ok=document.createElement('button');ok.textContent='저장';
-   ok.onclick=()=>{p.q=q.value.trim();p.a=a.value.trim();qaEditing=null;qaSave();renderQA()};
+   ok.onclick=()=>{
+    const nq=q.value.trim(),na=a.value.trim(),nqk=qk.value.trim(),nak=ak.value.trim();
+    p.qk=(nq!==p.q&&nqk===(p.qk||''))?'':nqk;
+    p.ak=(na!==p.a&&nak===(p.ak||''))?'':nak;
+    p.q=nq;p.a=na;qaEditing=null;qaSave();renderQA();
+   };
    const no=document.createElement('button');no.className='sec';no.textContent='취소';no.onclick=()=>{qaEditing=null;renderQA()};
-   row.append(ok,no);card.append(q,a,row);box.append(card);return;
+   row.append(ok,no);card.append(q,qk,a,ak,row);box.append(card);return;
   }
-  const qb=qaBlock('Q.',p.q),ab=qaBlock('A.',p.a);
+  const qb=qaBlock('Q.',p.q,{pair:p,field:'q',key:p.id+':q'}),ab=qaBlock('A.',p.a,{pair:p,field:'a',key:p.id+':a'});
   card.append(qb,ab);
   if(qaCur==='all'){const tn=document.createElement('div');tn.className='hint';tn.textContent='주제: '+((qa.topics.find(t=>t.id===p.t)||{}).name||'');card.append(tn)}
   const row=document.createElement('div');row.className='row';
@@ -877,8 +950,21 @@ function renderQA(){
   [pb,eb,db].forEach(b=>b.style.cssText='padding:6px 10px;font-size:13px');
   row.append(pb,eb,db);card.append(row);box.append(card);
  });
- qaUpdBtn();
+ qaUpdBtn();qaUpdTr();
 }
+function qaUpdTr(){
+ const vis=qa.pairs.filter(p=>qaCur==='all'||p.t===qaCur);
+ const keys=[];vis.forEach(p=>{if(p.q&&p.q.trim())keys.push(p.id+':q');if(p.a&&p.a.trim())keys.push(p.id+':a')});
+ const all=keys.length>0&&keys.every(k=>qaTrOpen.has(k));
+ $('qatrtoggle').textContent=all?'🇰🇷 번역 모두 접기':'🇰🇷 번역 모두 펼치기';
+}
+$('qatrtoggle').onclick=()=>{
+ const vis=qa.pairs.filter(p=>qaCur==='all'||p.t===qaCur);
+ const keys=[];vis.forEach(p=>{if(p.q&&p.q.trim())keys.push(p.id+':q');if(p.a&&p.a.trim())keys.push(p.id+':a')});
+ const all=keys.length>0&&keys.every(k=>qaTrOpen.has(k));
+ keys.forEach(k=>{if(all)qaTrOpen.delete(k);else qaTrOpen.add(k)});renderQA();
+};
+$('qatrall').onclick=qaTranslateAll;
 $('qaplayall').onclick=()=>{
  if(qaPlaying&&qaOwner==='all'){qaStop();$('qamsg').textContent='정지했어요.';return}
  const vis=qa.pairs.filter(p=>qaCur==='all'||p.t===qaCur);
