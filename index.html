@@ -120,6 +120,7 @@ input{flex:1;min-width:120px}
  </div>
  <div class="card">
   <b>질문 · 답변 추가</b>
+  <textarea id="mnew" style="min-height:40px;margin-top:8px" placeholder="메모 (선택) — 예: 강조할 점, 키워드, 주의사항"></textarea>
   <textarea id="qnew" style="min-height:60px;margin-top:8px" placeholder="질문 (예: Tell me about your favorite place to relax.)"></textarea>
   <textarea id="anew" style="min-height:120px;margin-top:8px" placeholder="답변"></textarea>
   <div class="row"><button id="qaadd">저장</button></div>
@@ -134,6 +135,8 @@ input{flex:1;min-width:120px}
    <button class="sec" id="qatrtoggle">🇰🇷 번역 모두 펼치기</button>
    <button class="sec" id="qatrall">🇰🇷 번역 모두 만들기</button>
    <button class="sec" id="qarandom">🎲 랜덤 질문</button>
+   <button class="sec" id="qaanstoggle">📕 답변 모두 접기</button>
+   <label class="hint"><input type="checkbox" id="qaskiph" style="flex:none;min-width:0"> 접힌 답변은 읽지 않기</label>
   </div>
   <div class="hint" id="qamsg" style="margin-top:6px">문장을 누르면 그 문장만 재생돼요. 음성은 한 번 만들면 이 기기에 저장돼서 다음부터는 바로 나와요.</div>
  </div>
@@ -839,6 +842,14 @@ async function qaPregen(){
 
 /* --- 화면 --- */
 let qaTrOpen=new Set();const qaTrBusy=new Set();
+let qaHide=new Set();try{qaHide=new Set(JSON.parse(localStorage.getItem('opic_qa_hide')||'[]'))}catch(e){}
+const qaHideSave=()=>{try{localStorage.setItem('opic_qa_hide',JSON.stringify([...qaHide]))}catch(e){}};
+function qaToggleAns(id){if(qaHide.has(id))qaHide.delete(id);else qaHide.add(id);qaHideSave();renderQA()}
+function memoBlock(t){
+ const d=document.createElement('div');
+ d.style.cssText='margin:0 0 6px;padding:6px 8px;border-left:3px solid #f59e0b;background:var(--bg);border-radius:6px;white-space:pre-wrap;font-size:14px;color:var(--mu)';
+ d.textContent='📝 '+t;return d;
+}
 function qaBlock(label,text,opt){
  const blk=document.createElement('div');blk.style.cssText='margin:6px 0;padding:2px 4px';
  blk._sp=[];
@@ -969,12 +980,12 @@ function renderQA(){
  ensureQA();renderQTopics();qaBtns.clear();
  const box=$('qalist');box.innerHTML='';
  const vis=qa.pairs.filter(p=>qaCur==='all'||p.t===qaCur);
- if(!vis.length){box.innerHTML='<div class="hint" style="padding:8px">이 주제에는 아직 질문·답변이 없어요.</div>';qaUpdBtn();qaUpdTr();return}
+ if(!vis.length){box.innerHTML='<div class="hint" style="padding:8px">이 주제에는 아직 질문·답변이 없어요.</div>';qaUpdBtn();qaUpdTr();qaUpdAns();return}
  vis.forEach(p=>{
   const card=document.createElement('div');card.className='card';
   if(qaEditing===p.id){
    const mkTa=(v,h,ph,mt)=>{const t=document.createElement('textarea');t.value=v||'';t.style.cssText='min-height:'+h+'px;margin-top:'+mt+'px';t.placeholder=ph;return t};
-   const q=mkTa(p.q,60,'질문',0),qk=mkTa(p.qk,40,'질문 한글 번역 (비워두면 번역 버튼을 누를 때 AI가 만들어요)',6);
+   const mm=mkTa(p.memo,50,'메모 (선택) — 예: 강조할 점, 키워드, 주의사항',0),q=mkTa(p.q,60,'질문',6),qk=mkTa(p.qk,40,'질문 한글 번역 (비워두면 번역 버튼을 누를 때 AI가 만들어요)',6);
    const a=mkTa(p.a,120,'답변',10),ak=mkTa(p.ak,80,'답변 한글 번역 (비워두면 번역 버튼을 누를 때 AI가 만들어요)',6);
    const row=document.createElement('div');row.className='row';
    const ok=document.createElement('button');ok.textContent='저장';
@@ -982,13 +993,17 @@ function renderQA(){
     const nq=q.value.trim(),na=a.value.trim(),nqk=qk.value.trim(),nak=ak.value.trim();
     p.qk=(nq!==p.q&&nqk===(p.qk||''))?'':nqk;
     p.ak=(na!==p.a&&nak===(p.ak||''))?'':nak;
-    p.q=nq;p.a=na;qaEditing=null;qaSave();renderQA();
+    p.memo=mm.value.trim();p.q=nq;p.a=na;qaEditing=null;qaSave();renderQA();
    };
    const no=document.createElement('button');no.className='sec';no.textContent='취소';no.onclick=()=>{qaEditing=null;renderQA()};
-   row.append(ok,no);card.append(q,qk,a,ak,row);box.append(card);return;
+   row.append(ok,no);card.append(mm,q,qk,a,ak,row);box.append(card);return;
   }
   const qb=qaBlock('Q.',p.q,{pair:p,field:'q',key:p.id+':q'}),ab=qaBlock('A.',p.a,{pair:p,field:'a',key:p.id+':a'});
-  card.append(qb,ab);
+  if(p.memo&&p.memo.trim())card.append(memoBlock(p.memo.trim()));
+  card.append(qb,ab);card._qb=qb;card._ab=ab;
+  const hid=qaHide.has(p.id);
+  ab.classList.toggle('hide',hid);
+  if(hid){const ph=document.createElement('div');ph.className='hint qs';ph.style.cssText='margin:4px 4px 6px';ph.textContent='▸ 답변이 접혀 있어요 (눌러서 펼치기)';ph.onclick=()=>qaToggleAns(p.id);card.append(ph)}
   if(qaCur==='all'){const tn=document.createElement('div');tn.className='hint';tn.textContent='주제: '+((qa.topics.find(t=>t.id===p.t)||{}).name||'');card.append(tn)}
   const row=document.createElement('div');row.className='row';
   const pb=document.createElement('button');pb.className='sec';pb.textContent='▶ 이 질문·답변';
@@ -1000,11 +1015,23 @@ function renderQA(){
   const eb=document.createElement('button');eb.className='sec';eb.textContent='✏️ 수정';eb.onclick=()=>{qaStop();qaEditing=p.id;renderQA()};
   const db=document.createElement('button');db.className='sec';db.textContent='🗑 삭제';
   armBtn(db,()=>{qa.pairs=qa.pairs.filter(x=>x.id!==p.id);qaSave();renderQA()});
-  [pb,eb,db].forEach(b=>b.style.cssText='padding:6px 10px;font-size:13px');
-  row.append(pb,eb,db);card.append(row);box.append(card);
+  const ob=document.createElement('button');ob.className='sec';ob.textContent=hid?'📖 답변 펼치기':'📕 답변 접기';ob.onclick=()=>qaToggleAns(p.id);
+  [pb,eb,db,ob].forEach(b=>b.style.cssText='padding:6px 10px;font-size:13px');
+  row.append(pb,ob,eb,db);card.append(row);box.append(card);
  });
- qaUpdBtn();qaUpdTr();
+ qaUpdBtn();qaUpdTr();qaUpdAns();
 }
+function qaUpdAns(){
+ const vis=qa.pairs.filter(p=>qaCur==='all'||p.t===qaCur);
+ const all=vis.length>0&&vis.every(p=>qaHide.has(p.id));
+ $('qaanstoggle').textContent=all?'📖 답변 모두 펼치기':'📕 답변 모두 접기';
+}
+$('qaanstoggle').onclick=()=>{
+ const vis=qa.pairs.filter(p=>qaCur==='all'||p.t===qaCur);
+ if(!vis.length)return;
+ const all=vis.every(p=>qaHide.has(p.id));
+ vis.forEach(p=>{if(all)qaHide.delete(p.id);else qaHide.add(p.id)});qaHideSave();renderQA();
+};
 function qaUpdTr(){
  const vis=qa.pairs.filter(p=>qaCur==='all'||p.t===qaCur);
  const keys=[];vis.forEach(p=>{if(p.q&&p.q.trim())keys.push(p.id+':q');if(p.a&&p.a.trim())keys.push(p.id+':a')});
@@ -1067,9 +1094,9 @@ $('qaplayall').onclick=()=>{
  const blocks=[...$('qalist').children];
  const items=[];
  vis.forEach((p,i)=>{
-  const card=blocks[i],kids=card&&card.children?[...card.children]:[];
-  if($('qaq').checked)items.push(...qaItemsOf(kids[0],p.q));
-  items.push(...qaItemsOf(kids[1],p.a));
+  const card=blocks[i];
+  if($('qaq').checked)items.push(...qaItemsOf(card&&card._qb,p.q));
+  if(!(qaHide.has(p.id)&&$('qaskiph').checked))items.push(...qaItemsOf(card&&card._ab,p.a));
  });
  qaPlayList(items,'all');
 };
@@ -1088,8 +1115,8 @@ armBtn($('qtdel'),()=>{
 $('qaadd').onclick=()=>{
  const q=$('qnew').value.trim(),a=$('anew').value.trim();
  if(!q&&!a){$('qaaddmsg').textContent='질문이나 답변을 입력해주세요.';return}
- qa.pairs.push({id:qaUid(),t:qaCur==='all'?qa.topics[0].id:qaCur,q,a});
- $('qnew').value='';$('anew').value='';$('qaaddmsg').textContent='저장했어요.';qaSave();renderQA();
+ qa.pairs.push({id:qaUid(),t:qaCur==='all'?qa.topics[0].id:qaCur,memo:$('mnew').value.trim(),q,a});
+ $('mnew').value='';$('qnew').value='';$('anew').value='';$('qaaddmsg').textContent='저장했어요.';qaSave();renderQA();
 };
 const saveCfgQ=()=>{qaGeminiDown=0;try{localStorage.setItem('opic_cfg',JSON.stringify(cfg))}catch(e){}};
 $('ttsengine').onchange=()=>{cfg.ttsEngine=$('ttsengine').value;saveCfgQ()};
@@ -1105,6 +1132,7 @@ $('ttsmodel').onchange=()=>{cfg.ttsModel=$('ttsmodel').value.trim();saveCfgQ()};
 $('ttsvoice').onchange=()=>{cfg.voice=$('ttsvoice').value;saveCfgQ()};
 $('qaspeed').onchange=()=>{cfg.qaSpeed=+$('qaspeed').value;saveCfgQ();if(aud)aud.playbackRate=+$('qaspeed').value};
 $('qaq').onchange=()=>{cfg.qaQ=$('qaq').checked;saveCfgQ()};
+$('qaskiph').onchange=()=>{cfg.qaSkipHidden=$('qaskiph').checked;saveCfgQ()};
 $('ttspick').onclick=async()=>{
  try{
   cfg.ttsKey=$('ttskey').value.trim();
@@ -1225,7 +1253,7 @@ showSync();connect();
 let cfg={provider:'gemini',key:'',model:'gemini-flash-latest',base:'http://localhost:11434/v1'};
 try{Object.assign(cfg,JSON.parse(localStorage.getItem('opic_cfg')||'{}'))}catch(e){}
 const MODELS={gemini:'gemini-flash-latest',anthropic:'claude-haiku-5-5',openai:'llama3.1'};
-function cfgUI(){$('audiosyncchk').checked=cfg.audioSync!==false;$('kvoice').value=cfg.kvoice||'af_heart';$('kurl').value=cfg.kurl||'';$('tbase').value=cfg.tBase||'';$('tsmodel').value=cfg.tsModel||'';$('tsvoice').value=cfg.tsVoice||'';$('ttsengine').value=cfg.ttsEngine||'gemini';$('ttsfb').checked=cfg.ttsFallback!==false;$('ttskey').value=cfg.ttsKey||'';$('ttsmodel').value=cfg.ttsModel||'';$('ttsvoice').value=cfg.voice||'Kore';$('qaspeed').value=String(cfg.qaSpeed||1);$('qaq').checked=cfg.qaQ!==false;$('mode').value=cfg.mode||'';$('autogenchk').checked=cfg.autogen!==false;$('lenient').value=String(cfg.lenient==null?1:cfg.lenient);$('forcenew').checked=!!cfg.forceNew;$('beepchk').checked=cfg.beep!==false;updateStored();$('prov').value=cfg.provider;$('key').value=cfg.key;$('model').value=cfg.model;$('base').value=cfg.base;$('baseRow').classList.toggle('hide',cfg.provider!=='openai')}
+function cfgUI(){$('qaskiph').checked=!!cfg.qaSkipHidden;$('audiosyncchk').checked=cfg.audioSync!==false;$('kvoice').value=cfg.kvoice||'af_heart';$('kurl').value=cfg.kurl||'';$('tbase').value=cfg.tBase||'';$('tsmodel').value=cfg.tsModel||'';$('tsvoice').value=cfg.tsVoice||'';$('ttsengine').value=cfg.ttsEngine||'gemini';$('ttsfb').checked=cfg.ttsFallback!==false;$('ttskey').value=cfg.ttsKey||'';$('ttsmodel').value=cfg.ttsModel||'';$('ttsvoice').value=cfg.voice||'Kore';$('qaspeed').value=String(cfg.qaSpeed||1);$('qaq').checked=cfg.qaQ!==false;$('mode').value=cfg.mode||'';$('autogenchk').checked=cfg.autogen!==false;$('lenient').value=String(cfg.lenient==null?1:cfg.lenient);$('forcenew').checked=!!cfg.forceNew;$('beepchk').checked=cfg.beep!==false;updateStored();$('prov').value=cfg.provider;$('key').value=cfg.key;$('model').value=cfg.model;$('base').value=cfg.base;$('baseRow').classList.toggle('hide',cfg.provider!=='openai')}
 $('prov').onchange=()=>{cfg.provider=$('prov').value;cfg.model=MODELS[cfg.provider];cfgUI()};
 $('cfgsave').onclick=()=>{cfg.key=$('key').value.trim();cfg.model=$('model').value.trim();cfg.base=$('base').value.trim();cfg.forceNew=$('forcenew').checked;cfg.beep=$('beepchk').checked;cfg.autogen=$('autogenchk').checked;cfg.lenient=+$('lenient').value;try{localStorage.setItem('opic_cfg',JSON.stringify(cfg))}catch(e){}$('cfgmsg').textContent='저장했어요.'};
 const cfgOk=()=>(cfg.provider==='openai'?!!(cfg.base&&cfg.model):!!(cfg.key&&cfg.model));
