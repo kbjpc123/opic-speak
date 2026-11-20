@@ -331,12 +331,17 @@ function renderAll(){renderCats();render();renderScope()}
 $('catadd').onclick=()=>{const n=$('catname').value.trim();if(!n)return;const c={id:uid(),name:n};cats.push(c);curCat=c.id;$('catname').value='';save();renderAll()};
 $('catren').onclick=()=>{if(curCat==='all'){$('addmsg').textContent='"전체"는 이름을 바꿀 수 없어요.';return}
  const n=$('catname').value.trim(),c=cats.find(c=>c.id===curCat);if(!n||!c)return;c.name=n;$('catname').value='';save();renderAll()};
-$('catdel').onclick=()=>{if(curCat==='all'){$('addmsg').textContent='"전체"는 삭제할 수 없어요.';return}
- 
- if(cats.length<2){$('sync').textContent='카테고리는 최소 하나가 필요해요.';return}
- const i=cats.findIndex(c=>c.id===curCat);cats.splice(i,1);const t=cats[0].id;
- words.forEach(w=>{if(w.c===curCat)w.c=t});curCat=t;save();renderAll();
-};
+armBtn($('catdel'),()=>{
+ const i=cats.findIndex(c=>c.id===curCat);if(i<0)return;
+ const gone=cats[i];cats.splice(i,1);const t=cats[0];
+ words.forEach(w=>{if(w.c===gone.id)w.c=t.id});curCat=t.id;save();renderAll();
+ $('addmsg').textContent='"'+gone.name+'" 카테고리를 삭제했어요. 안에 있던 표현은 "'+t.name+'"'+ro(t.name)+' 옮겼어요.';
+},()=>{
+ if(curCat==='all'){$('addmsg').textContent='"전체"는 삭제할 수 없어요.';return false}
+ if(cats.length<2){$('addmsg').textContent='카테고리는 최소 하나가 필요해요.';return false}
+ const c=cats.find(x=>x.id===curCat),to=cats.find(x=>x.id!==curCat),n=words.filter(w=>w.c===curCat).length;
+ $('addmsg').textContent='"'+c.name+'" 카테고리를 삭제할까요? 안의 표현 '+n+'개는 지워지지 않고 "'+to.name+'"'+ro(to.name)+' 옮겨져요. 4초 안에 한 번 더 누르면 삭제돼요.';
+},()=>{$('addmsg').textContent=''});
 let listOpen=false;
 $('toggle').onclick=()=>{listOpen=!listOpen;render()};
 ensure();renderAll();
@@ -500,12 +505,17 @@ function qaSave(){
  if(docRef)push();
 }
 const splitSents=t=>String(t).split(/\n+/).flatMap(par=>par.match(/[^.!?]+(?:[.!?]+["')\]]*|$)/g)||[]).map(x=>x.trim()).filter(Boolean);
-function armBtn(btn,fn){
- let a=false,old=btn.textContent;
+const ro=n=>{const c=String(n).trim().slice(-1).charCodeAt(0);if(c>=0xAC00&&c<=0xD7A3){const f=(c-0xAC00)%28;return(f===0||f===8)?'로':'으로'}return '(으)로'};
+function armBtn(btn,fn,pre,post){
+ let a=false,old=btn.textContent,tm=null;
+ const off=()=>{a=false;btn.textContent=old;btn.style.background='';btn.style.color='';if(tm){clearTimeout(tm);tm=null}if(post)post()};
  btn.onclick=()=>{
-  if(!a){a=true;old=btn.textContent;btn.textContent='정말?';btn.style.background='#dc2626';btn.style.color='#fff';
-   setTimeout(()=>{a=false;btn.textContent=old;btn.style.background='';btn.style.color=''},3000);return}
-  a=false;btn.textContent=old;btn.style.background='';btn.style.color='';fn();
+  if(!a){
+   if(pre&&pre()===false)return;
+   a=true;old=btn.textContent;btn.textContent='정말 삭제?';btn.style.background='#dc2626';btn.style.color='#fff';
+   tm=setTimeout(off,4000);return;
+  }
+  off();fn();
  };
 }
 
@@ -1107,12 +1117,17 @@ $('qtren').onclick=()=>{
  const n=$('qtname').value.trim(),t=qa.topics.find(x=>x.id===qaCur);if(!n||!t)return;t.name=n;$('qtname').value='';qaSave();renderQA();
 };
 armBtn($('qtdel'),()=>{
- if(qaCur==='all'){$('qtmsg').textContent='"전체"는 삭제할 수 없어요.';return}
- if(qa.topics.length<2){$('qtmsg').textContent='주제는 최소 하나가 필요해요.';return}
- const i=qa.topics.findIndex(t=>t.id===qaCur);qa.topics.splice(i,1);
- const to=qa.topics[0].id;qa.pairs.forEach(p=>{if(p.t===qaCur)p.t=to});
- qaCur='all';qaSave();renderQA();$('qtmsg').textContent='삭제한 주제의 질문·답변은 첫 번째 주제로 옮겼어요.';
-});
+ const i=qa.topics.findIndex(t=>t.id===qaCur);if(i<0)return;
+ const gone=qa.topics[i];qa.topics.splice(i,1);const to=qa.topics[0];
+ qa.pairs.forEach(p=>{if(p.t===gone.id)p.t=to.id});
+ qaCur='all';qaSave();renderQA();
+ $('qtmsg').textContent='"'+gone.name+'" 주제를 삭제했어요. 안에 있던 질문·답변은 "'+to.name+'"'+ro(to.name)+' 옮겼어요.';
+},()=>{
+ if(qaCur==='all'){$('qtmsg').textContent='"전체"는 삭제할 수 없어요.';return false}
+ if(qa.topics.length<2){$('qtmsg').textContent='주제는 최소 하나가 필요해요.';return false}
+ const t=qa.topics.find(x=>x.id===qaCur),to=qa.topics.find(x=>x.id!==qaCur),n=qa.pairs.filter(p=>p.t===qaCur).length;
+ $('qtmsg').textContent='"'+t.name+'" 주제를 삭제할까요? 안의 질문·답변 '+n+'개는 지워지지 않고 "'+to.name+'"'+ro(to.name)+' 옮겨져요. 4초 안에 한 번 더 누르면 삭제돼요.';
+},()=>{$('qtmsg').textContent=''});
 $('qaadd').onclick=()=>{
  const q=$('qnew').value.trim(),a=$('anew').value.trim();
  if(!q&&!a){$('qaaddmsg').textContent='질문이나 답변을 입력해주세요.';return}
