@@ -133,7 +133,7 @@ input{flex:1;min-width:120px}
   <div id="qaadd2body" class="hide">
   <textarea id="mnew" style="min-height:40px;margin-top:8px" placeholder="메모 (선택) — 예: 강조할 점, 키워드, 주의사항"></textarea>
   <textarea id="qnew" style="min-height:60px;margin-top:8px" placeholder="질문 (예: Tell me about your favorite place to relax.)"></textarea>
-  <textarea id="anew" style="min-height:120px;margin-top:8px" placeholder="답변"></textarea>
+  <textarea id="anew" style="min-height:240px;margin-top:8px" placeholder="답변"></textarea>
   <div class="row"><button id="qaadd">저장</button></div>
   <div class="hint" id="qaaddmsg"></div>
   </div>
@@ -1035,7 +1035,7 @@ function renderQA(){
   if(qaEditing===p.id){
    const mkTa=(v,h,ph,mt)=>{const t=document.createElement('textarea');t.value=v||'';t.style.cssText='min-height:'+h+'px;margin-top:'+mt+'px';t.placeholder=ph;return t};
    const mm=mkTa(p.memo,50,'메모 (선택) — 예: 강조할 점, 키워드, 주의사항',0),q=mkTa(p.q,60,'질문',6),qk=mkTa(p.qk,40,'질문 한글 번역 (비워두면 번역 버튼을 누를 때 AI가 만들어요)',6);
-   const a=mkTa(p.a,120,'답변',10),ak=mkTa(p.ak,80,'답변 한글 번역 (비워두면 번역 버튼을 누를 때 AI가 만들어요)',6);
+   const a=mkTa(p.a,240,'답변',10),ak=mkTa(p.ak,160,'답변 한글 번역 (비워두면 번역 버튼을 누를 때 AI가 만들어요)',6);
    const row=document.createElement('div');row.className='row';
    const ok=document.createElement('button');ok.textContent='저장';
    ok.onclick=()=>{
