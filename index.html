@@ -71,15 +71,15 @@ input{flex:1;min-width:120px}
  </div>
  <div class="card">
   <div class="row" style="margin-top:0;align-items:center;justify-content:space-between"><b>표현</b><button class="sec" id="toggle">▼ 펼치기</button></div>
-  <div id="list" class="hide" style="margin-top:12px"></div>
- </div>
- <div class="card">
-  <div class="row" style="margin-top:0;align-items:center;justify-content:space-between"><b>표현 추가</b><button class="sec" id="addx">▼ 펼치기</button></div>
-  <div id="addxbody" class="hide">
-  <p class="hint">한 줄에 하나씩 입력하세요. 뜻을 적고 싶으면 <code>표현 | 뜻</code> 형식도 가능해요.</p>
-  <textarea id="inp" placeholder="run out of | 다 떨어지다&#10;get used to&#10;hang out"></textarea>
-  <div class="row"><button id="add">추가</button></div>
-  <div class="hint" id="addmsg" style="margin-top:6px"></div>
+  <div id="listwrap" class="hide" style="margin-top:12px">
+   <div id="listbar"></div>
+   <div id="addpanel" class="hide" style="margin-top:12px">
+    <p class="hint" style="margin-top:0">한 줄에 하나씩 입력하세요. 뜻을 적고 싶으면 <code>표현 | 뜻</code> 형식도 가능해요.</p>
+    <textarea id="inp" placeholder="run out of | 다 떨어지다&#10;get used to&#10;hang out"></textarea>
+    <div class="row"><button id="add">추가</button></div>
+    <div class="hint" id="addmsg" style="margin-top:6px"></div>
+   </div>
+   <div id="list" style="margin-top:12px"></div>
   </div>
  </div>
  <div class="card">
@@ -239,13 +239,14 @@ let openSent=new Set(),selected=new Set(),moveDest='';
 const catName=id=>(cats.find(x=>x.id===id)||{}).name||'';
 const gsOf=p=>{try{return cacheGet(p)}catch(e){return []}};
 function render(){
- const box=$('list');box.innerHTML='';
+ const box=$('list');box.innerHTML='';const bb=$('listbar');bb.innerHTML='';
  const vis=words.map((w,i)=>[w,i]).filter(([w])=>curCat==='all'||w.c===curCat);
- box.classList.toggle('hide',!listOpen);
+ $('listwrap').classList.toggle('hide',!listOpen);$('addpanel').classList.toggle('hide',!addOpen);
  $('toggle').textContent=(listOpen?'▲ 접기':'▼ 펼치기')+' · '+vis.length+'개';
  const keyOf=w=>w.p.trim().toLowerCase();
  const small=b=>{b.style.cssText='padding:6px 10px;font-size:13px';return b};
  const mk=(txt,cls,fn)=>{const b=document.createElement('button');b.className=cls;b.textContent=txt;b.onclick=fn;return small(b)};
+ const addBtn=mk(addOpen?'표현 추가 취소':'표현 추가','',()=>{addOpen=!addOpen;render();if(addOpen)try{$('inp').focus()}catch(e){}});
  if(vis.length){
   const withS=vis.filter(([w])=>gsOf(w.p).length);
   const allOpen=withS.length>0&&withS.every(([w])=>openSent.has(keyOf(w)));
@@ -272,8 +273,8 @@ function render(){
    selected.clear();save();renderAll();
   });
   bm.disabled=!selN;
-  bar.append(b1,b2,ms,bm,b3);box.append(bar);
- }
+  bar.append(addBtn,b1,b2,ms,bm,b3);bb.append(bar);
+ }else{const bar=document.createElement('div');bar.className='row';bar.style.marginTop='0';bar.append(addBtn);bb.append(bar)}
  vis.forEach(([w])=>{
   const wrap=document.createElement('div');
   const d=document.createElement('div');d.className='w';d.style.flexWrap='wrap';
@@ -352,7 +353,7 @@ armBtn($('catdel'),()=>{
  const c=cats.find(x=>x.id===curCat),to=cats.find(x=>x.id!==curCat),n=words.filter(w=>w.c===curCat).length;
  $('addmsg').textContent='"'+c.name+'" 카테고리를 삭제할까요? 안의 표현 '+n+'개는 지워지지 않고 "'+to.name+'"'+ro(to.name)+' 옮겨져요. 4초 안에 한 번 더 누르면 삭제돼요.';
 },()=>{$('addmsg').textContent=''});
-let listOpen=false;
+let listOpen=false,addOpen=false;
 $('toggle').onclick=()=>{listOpen=!listOpen;render()};
 ensure();renderAll();
 
@@ -1125,7 +1126,7 @@ $('qaplayall').onclick=()=>{
  if(!items.length){$('qamsg').textContent='읽을 내용이 없어요. 질문 읽기·답변 읽기 중 하나는 켜주세요.';return}
  qaPlayList(items,'all');
 };
-[['addx'],['qaadd2']].forEach(([i])=>{$(i).onclick=()=>{const b=$(i+'body'),h=b.classList.toggle('hide');$(i).textContent=h?'▼ 펼치기':'▲ 접기'}});
+[['qaadd2']].forEach(([i])=>{$(i).onclick=()=>{const b=$(i+'body'),h=b.classList.toggle('hide');$(i).textContent=h?'▼ 펼치기':'▲ 접기'}});
 $('qtadd').onclick=()=>{const n=$('qtname').value.trim();if(!n)return;const t={id:qaUid(),name:n};qa.topics.push(t);qaCur=t.id;$('qtname').value='';qaSave();renderQA()};
 $('qtren').onclick=()=>{
  if(qaCur==='all'){$('qtmsg').textContent='"전체"는 이름을 바꿀 수 없어요.';return}
