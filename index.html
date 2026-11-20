@@ -870,7 +870,7 @@ async function qaPregen(){
  if(cfg.ttsEngine==='browser'){$('qamsg').textContent='브라우저 음성은 미리 만들 필요가 없어요. (음성 설정에서 엔진을 바꾸면 미리 만들 수 있어요)';return}
  const vis=qa.pairs.filter(p=>qaCur==='all'||p.t===qaCur);
  const unit=t=>qaSentMode()?splitSents(t):[t];
- const texts=[...new Set(vis.flatMap(p=>[...($('qaq').checked?unit(p.q):[]),...($('qaa').checked?unit(p.a):[])]).filter(Boolean))];
+ const texts=[...new Set(vis.flatMap(p=>[...($('qaq').checked?[p.q,...(p.x||[]).map(x=>x.q)].flatMap(unit):[]),...($('qaa').checked?unit(p.a):[])]).filter(Boolean))];
  if(!texts.length){$('qamsg').textContent='만들 질문·답변이 없어요.';return}
  qaPre=true;$('qapregen').textContent='⏹ 만들기 멈춤';
  try{wakeOn()}catch(e){}
@@ -986,6 +986,7 @@ async function qaToggleTr(p,field,key){
 async function qaTranslateAll(){
  const vis=qa.pairs.filter(p=>qaCur==='all'||p.t===qaCur);
  const jobs=vis.map(p=>({p,fields:['q','a'].filter(f=>p[f]&&p[f].trim()&&!p[f==='q'?'qk':'ak'])})).filter(j=>j.fields.length);
+ vis.forEach(p=>(p.x||[]).forEach(x=>{if(x.q&&x.q.trim()&&!x.qk)jobs.push({p:x,fields:['q']})}));
  if(!jobs.length){$('qamsg').textContent='번역이 필요한 질문·답변이 없어요. (이미 모두 있어요)';return}
  if(!cfgOk()){$('qamsg').textContent='번역을 만들려면 AI 설정이 필요해요.';openSettings();return}
  const chunks=[];let cur=[],len=0;
@@ -1038,20 +1039,43 @@ function renderQA(){
    const mkTa=(v,h,ph,mt)=>{const t=document.createElement('textarea');t.value=v||'';t.style.cssText='min-height:'+h+'px;margin-top:'+mt+'px';t.placeholder=ph;return t};
    const mm=mkTa(p.memo,50,'메모 (선택) — 예: 강조할 점, 키워드, 주의사항',0),q=mkTa(p.q,60,'질문',6),qk=mkTa(p.qk,40,'질문 한글 번역 (비워두면 번역 버튼을 누를 때 AI가 만들어요)',6);
    const a=mkTa(p.a,240,'답변',10),ak=mkTa(p.ak,160,'답변 한글 번역 (비워두면 번역 버튼을 누를 때 AI가 만들어요)',6);
+   const xs=[],xbox=document.createElement('div');
+   const renum=()=>xs.forEach((r,i)=>{r.h.textContent='질문 '+(i+2)});
+   const addX=x=>{
+    const w=document.createElement('div');w.style.cssText='margin-top:8px;padding:6px;border:1px dashed var(--mu);border-radius:8px';
+    const h=document.createElement('div');h.className='hint';h.style.fontWeight='600';
+    const xq=mkTa(x.q,60,'추가 질문',4),xqk=mkTa(x.qk,40,'추가 질문 한글 번역 (비워두면 번역 버튼을 누를 때 AI가 만들어요)',6);
+    const rm=document.createElement('button');rm.className='sec';rm.textContent='✕ 이 질문 빼기 (저장 전에는 취소 가능)';rm.style.cssText='margin-top:6px;padding:4px 10px;font-size:13px';
+    const rec={id:x.id||qaUid(),old:x.q||'',oldk:x.qk||'',q:xq,qk:xqk,h};
+    rm.onclick=()=>{const i=xs.indexOf(rec);if(i>=0)xs.splice(i,1);w.remove();renum()};
+    w.append(h,xq,xqk,rm);xbox.append(w);xs.push(rec);renum();
+   };
+   (p.x||[]).forEach(addX);
+   const ax=document.createElement('button');ax.className='sec';ax.textContent='+ 질문 추가 (같은 답변에 질문 더 연결)';ax.style.cssText='margin-top:8px;padding:6px 10px;font-size:13px';
+   ax.onclick=()=>addX({});
    const row=document.createElement('div');row.className='row';
    const ok=document.createElement('button');ok.textContent='저장';
    ok.onclick=()=>{
     const nq=q.value.trim(),na=a.value.trim(),nqk=qk.value.trim(),nak=ak.value.trim();
     p.qk=(nq!==p.q&&nqk===(p.qk||''))?'':nqk;
     p.ak=(na!==p.a&&nak===(p.ak||''))?'':nak;
+    const nx=[];
+    xs.forEach(r=>{
+     const xq=r.q.value.trim(),xk=r.qk.value.trim();
+     if(!xq)return;
+     nx.push({id:r.id,q:xq,qk:(xq!==r.old&&xk===r.oldk)?'':xk});
+    });
+    if(nx.length)p.x=nx;else delete p.x;
     p.memo=mm.value.trim();p.q=nq;p.a=na;qaEditing=null;qaSave();renderQA();
    };
    const no=document.createElement('button');no.className='sec';no.textContent='취소';no.onclick=()=>{qaEditing=null;renderQA()};
-   row.append(ok,no);card.append(mm,q,qk,a,ak,row);box.append(card);return;
+   row.append(ok,no);card.append(mm,q,qk,xbox,ax,a,ak,row);box.append(card);return;
   }
-  const qb=qaBlock('Q.',p.q,{pair:p,field:'q',key:p.id+':q'}),ab=qaBlock('A.',p.a,{pair:p,field:'a',key:p.id+':a'});
+  const xl=p.x||[],hasX=xl.length>0;
+  const qb=qaBlock(hasX?'Q1.':'Q.',p.q,{pair:p,field:'q',key:p.id+':q'}),ab=qaBlock('A.',p.a,{pair:p,field:'a',key:p.id+':a'});
+  const xb=xl.map((x,i)=>qaBlock('Q'+(i+2)+'.',x.q,{pair:x,field:'q',key:x.id+':q'}));
   if(p.memo&&p.memo.trim())card.append(memoBlock(p.memo.trim()));
-  card.append(qb,ab);card._qb=qb;card._ab=ab;
+  card.append(qb,...xb,ab);card._qb=qb;card._ab=ab;
   const hid=qaHide.has(p.id);
   ab.classList.toggle('hide',hid);
   if(hid){const ph=document.createElement('div');ph.className='hint qs';ph.style.cssText='margin:4px 4px 6px';ph.textContent='▸ 답변이 접혀 있어요 (눌러서 펼치기)';ph.onclick=()=>qaToggleAns(p.id);card.append(ph)}
@@ -1065,13 +1089,15 @@ function renderQA(){
   };
   const mk=(lab,fld,blk)=>{const b=document.createElement('button');b.className='sec';b._lab=lab;b.textContent=lab;const oid=p.id+':'+fld;qaBtns.set(oid,b);
    b.onclick=()=>{if(qaPlaying&&qaOwner===oid){qaStop();$('qamsg').textContent='정지했어요.';return}qaPlayList(qaItemsOf(blk,p[fld],fld),oid)};return b};
-  const pq=mk('🔊 질문만','q',qb),pa=mk('🔊 답변만','a',ab);
+  const pq=mk(hasX?'🔊 Q1':'🔊 질문만','q',qb),pa=mk('🔊 답변만','a',ab);
+  const px=xl.map((x,i)=>{const b=document.createElement('button');b.className='sec';b._lab='🔊 Q'+(i+2);b.textContent=b._lab;const oid=x.id+':q';qaBtns.set(oid,b);
+   b.onclick=()=>{if(qaPlaying&&qaOwner===oid){qaStop();$('qamsg').textContent='정지했어요.';return}qaPlayList(qaItemsOf(xb[i],x.q,'q'),oid)};return b});
   const eb=document.createElement('button');eb.className='sec';eb.textContent='✏️ 수정';eb.onclick=()=>{qaStop();qaEditing=p.id;renderQA()};
   const db=document.createElement('button');db.className='sec';db.textContent='🗑 삭제';
   armBtn(db,()=>{qa.pairs=qa.pairs.filter(x=>x.id!==p.id);qaSave();renderQA()});
   const ob=document.createElement('button');ob.className='sec';ob.textContent=hid?'📖 답변 펼치기':'📕 답변 접기';ob.onclick=()=>qaToggleAns(p.id);
-  [pb,pq,pa,eb,db,ob].forEach(b=>b.style.cssText='padding:6px 10px;font-size:13px');
-  row.append(pb,pq,pa,ob,eb,db);card.append(row);box.append(card);
+  [pb,pq,...px,pa,eb,db,ob].forEach(b=>b.style.cssText='padding:6px 10px;font-size:13px');
+  row.append(pb,pq,...px,pa,ob,eb,db);card.append(row);box.append(card);
  });
  qaUpdBtn();qaUpdTr();qaUpdAns();
 }
@@ -1088,19 +1114,19 @@ $('qaanstoggle').onclick=()=>{
 };
 function qaUpdTr(){
  const vis=qa.pairs.filter(p=>qaCur==='all'||p.t===qaCur);
- const keys=[];vis.forEach(p=>{if(p.q&&p.q.trim())keys.push(p.id+':q');if(p.a&&p.a.trim())keys.push(p.id+':a')});
+ const keys=[];vis.forEach(p=>{if(p.q&&p.q.trim())keys.push(p.id+':q');(p.x||[]).forEach(x=>{if(x.q&&x.q.trim())keys.push(x.id+':q')});if(p.a&&p.a.trim())keys.push(p.id+':a')});
  const all=keys.length>0&&keys.every(k=>qaTrOpen.has(k));
  $('qatrtoggle').textContent=all?'🇰🇷 번역 모두 접기':'🇰🇷 번역 모두 펼치기';
 }
 $('qatrtoggle').onclick=()=>{
  const vis=qa.pairs.filter(p=>qaCur==='all'||p.t===qaCur);
- const keys=[];vis.forEach(p=>{if(p.q&&p.q.trim())keys.push(p.id+':q');if(p.a&&p.a.trim())keys.push(p.id+':a')});
+ const keys=[];vis.forEach(p=>{if(p.q&&p.q.trim())keys.push(p.id+':q');(p.x||[]).forEach(x=>{if(x.q&&x.q.trim())keys.push(x.id+':q')});if(p.a&&p.a.trim())keys.push(p.id+':a')});
  const all=keys.length>0&&keys.every(k=>qaTrOpen.has(k));
  keys.forEach(k=>{if(all)qaTrOpen.delete(k);else qaTrOpen.add(k)});renderQA();
 };
 $('qatrall').onclick=qaTranslateAll;
 /* --- 랜덤 질문 연습 (선택한 주제에서 무작위로, 다 돌 때까지 중복 없이) --- */
-let qrBag=[],qrBagKey='',qrCur=null,qrQB=null,qrAB=null;
+let qrBag=[],qrBagKey='',qrCur=null,qrQB=null,qrAB=null,qrQT='';
 function qaRandNext(){
  const vis=qa.pairs.filter(p=>(qaCur==='all'||p.t===qaCur)&&p.q&&p.q.trim());
  if(!vis.length){$('qamsg').textContent='이 주제에는 들을 질문이 없어요.';return}
@@ -1112,20 +1138,22 @@ function qaRandNext(){
  const nid=qrBag.shift();
  const p=vis.find(x=>x.id===nid);
  qrCur=p;
- qrQB=qaBlock('Q.',p.q);qrAB=null;
+ const qpool=[p.q,...(p.x||[]).map(x=>x.q)].filter(t=>t&&t.trim());
+ qrQT=qpool[Math.floor(Math.random()*qpool.length)];
+ qrQB=qaBlock('Q.',qrQT);qrAB=null;
  $('qrq').innerHTML='';$('qrq').append(qrQB);$('qrq').classList.toggle('hide',$('qrhide').checked);
  $('qra').innerHTML='';$('qra').classList.add('hide');$('qrplaya').classList.add('hide');$('qrans').textContent='👀 답변 보기';
  const tn=qaCur==='all'?'전체':((qa.topics.find(t=>t.id===qaCur)||{}).name||'');
  $('qrinfo').textContent=' '+tn+' · 이번 바퀴 남은 질문 '+qrBag.length+'개';
  $('qarand').classList.remove('hide');
- qaPlayList(qaItemsOf(qrQB,p.q,'q'),'rand');
+ qaPlayList(qaItemsOf(qrQB,qrQT,'q'),'rand');
 }
 $('qarandom').onclick=qaRandNext;
 $('qrnext').onclick=qaRandNext;
 $('qrplay').onclick=()=>{
  if(!qrCur)return;
  if(qaPlaying&&qaOwner==='rand'){qaStop();return}
- qaPlayList(qaItemsOf(qrQB,qrCur.q,'q'),'rand');
+ qaPlayList(qaItemsOf(qrQB,qrQT,'q'),'rand');
 };
 $('qrans').onclick=()=>{
  if(!qrCur)return;
