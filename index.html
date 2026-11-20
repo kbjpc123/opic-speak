@@ -65,15 +65,20 @@ input{flex:1;min-width:120px}
 
 <section id="setup">
  <div class="card">
-  <b>내 단어·숙어</b>
+  <b>카테고리</b>
   <div id="cats" class="chips"></div>
   <div class="row" style="margin-top:0"><input id="catname" placeholder="카테고리 이름"><button class="sec" id="catadd">추가</button><button class="sec" id="catren">이름변경</button><button class="sec" id="catdel">삭제</button></div>
+  <div class="row"><button class="sec" id="toggle">▼ 펼치기</button></div>
+  <div id="list" class="hide" style="margin-top:12px"></div>
+ </div>
+ <div class="card">
+  <div class="row" style="margin-top:0;align-items:center;justify-content:space-between"><b>표현 추가</b><button class="sec" id="addx">▼ 펼치기</button></div>
+  <div id="addxbody" class="hide">
   <p class="hint">한 줄에 하나씩 입력하세요. 뜻을 적고 싶으면 <code>표현 | 뜻</code> 형식도 가능해요.</p>
   <textarea id="inp" placeholder="run out of | 다 떨어지다&#10;get used to&#10;hang out"></textarea>
   <div class="row"><button id="add">추가</button></div>
   <div class="hint" id="addmsg" style="margin-top:6px"></div>
-  <div class="row"><button class="sec" id="toggle">▼ 펼치기</button></div>
-  <div id="list" class="hide" style="margin-top:12px"></div>
+  </div>
  </div>
  <div class="card">
   <label class="hint">학습 범위 <select id="scope"></select></label>
@@ -120,18 +125,21 @@ input{flex:1;min-width:120px}
   <div class="hint" id="qtmsg"></div>
  </div>
  <div class="card">
-  <b>질문 · 답변 추가</b>
+  <div class="row" style="margin-top:0;align-items:center;justify-content:space-between"><b>질문 · 답변 추가</b><button class="sec" id="qaadd2">▼ 펼치기</button></div>
+  <div id="qaadd2body" class="hide">
   <textarea id="mnew" style="min-height:40px;margin-top:8px" placeholder="메모 (선택) — 예: 강조할 점, 키워드, 주의사항"></textarea>
   <textarea id="qnew" style="min-height:60px;margin-top:8px" placeholder="질문 (예: Tell me about your favorite place to relax.)"></textarea>
   <textarea id="anew" style="min-height:120px;margin-top:8px" placeholder="답변"></textarea>
   <div class="row"><button id="qaadd">저장</button></div>
   <div class="hint" id="qaaddmsg"></div>
+  </div>
  </div>
  <div class="card">
   <div class="row" style="margin-top:0;align-items:center">
    <button id="qaplayall">▶ 전체 듣기</button>
    <label class="hint">속도 <select id="qaspeed"><option value="0.6">0.6×</option><option value="0.75">0.75×</option><option value="0.9">0.9×</option><option value="1" selected>1×</option><option value="1.15">1.15×</option><option value="1.3">1.3×</option><option value="1.5">1.5×</option><option value="1.75">1.75×</option></select></label>
-   <label class="hint"><input type="checkbox" id="qaq" checked style="flex:none;min-width:0"> 질문도 읽기</label>
+   <label class="hint"><input type="checkbox" id="qaq" checked style="flex:none;min-width:0"> 질문 읽기</label>
+   <label class="hint"><input type="checkbox" id="qaa" checked style="flex:none;min-width:0"> 답변 읽기</label>
    <button class="sec" id="qapregen">🎧 음성 미리 만들기</button>
    <button class="sec" id="qatrtoggle">🇰🇷 번역 모두 펼치기</button>
    <button class="sec" id="qatrall">🇰🇷 번역 모두 만들기</button>
@@ -754,7 +762,7 @@ function qaUpdBtn(){
  const rb=$('qrplay');if(rb)rb.textContent=(qaPlaying&&qaOwner==='rand')?'⏹ 정지':'🔁 다시 듣기';
  const ra=$('qrplaya');if(ra)ra.textContent=(qaPlaying&&qaOwner==='randA')?'⏹ 정지':'▶ 답변 듣기';
  $('qaplayall').textContent=(qaPlaying&&qaOwner==='all')?'⏹ 정지':'▶ 전체 듣기';
- qaBtns.forEach((b,id)=>{b.textContent=(qaPlaying&&qaOwner===id)?'⏹ 정지':'▶ 이 질문·답변'});
+ qaBtns.forEach((b,id)=>{b.textContent=(qaPlaying&&qaOwner===id)?'⏹ 정지':(b._lab||'▶ 이 질문·답변')});
 }
 function qaStop(){
  qaId++;qaPlaying=false;qaOwner=null;
@@ -831,7 +839,7 @@ async function qaPregen(){
  if(cfg.ttsEngine==='browser'){$('qamsg').textContent='브라우저 음성은 미리 만들 필요가 없어요. (음성 설정에서 엔진을 바꾸면 미리 만들 수 있어요)';return}
  const vis=qa.pairs.filter(p=>qaCur==='all'||p.t===qaCur);
  const unit=t=>qaSentMode()?splitSents(t):[t];
- const texts=[...new Set(vis.flatMap(p=>[...($('qaq').checked?unit(p.q):[]),...unit(p.a)]).filter(Boolean))];
+ const texts=[...new Set(vis.flatMap(p=>[...($('qaq').checked?unit(p.q):[]),...($('qaa').checked?unit(p.a):[])]).filter(Boolean))];
  if(!texts.length){$('qamsg').textContent='만들 질문·답변이 없어요.';return}
  qaPre=true;$('qapregen').textContent='⏹ 만들기 멈춤';
  try{wakeOn()}catch(e){}
@@ -1023,12 +1031,15 @@ function renderQA(){
    if(qaPlaying&&qaOwner===p.id){qaStop();$('qamsg').textContent='정지했어요.';return}
    qaPlayList(($('qaq').checked?qaItemsOf(qb,p.q):[]).concat(qaItemsOf(ab,p.a)),p.id);
   };
+  const mk=(lab,fld,blk)=>{const b=document.createElement('button');b.className='sec';b._lab=lab;b.textContent=lab;const oid=p.id+':'+fld;qaBtns.set(oid,b);
+   b.onclick=()=>{if(qaPlaying&&qaOwner===oid){qaStop();$('qamsg').textContent='정지했어요.';return}qaPlayList(qaItemsOf(blk,p[fld]),oid)};return b};
+  const pq=mk('🔊 질문만','q',qb),pa=mk('🔊 답변만','a',ab);
   const eb=document.createElement('button');eb.className='sec';eb.textContent='✏️ 수정';eb.onclick=()=>{qaStop();qaEditing=p.id;renderQA()};
   const db=document.createElement('button');db.className='sec';db.textContent='🗑 삭제';
   armBtn(db,()=>{qa.pairs=qa.pairs.filter(x=>x.id!==p.id);qaSave();renderQA()});
   const ob=document.createElement('button');ob.className='sec';ob.textContent=hid?'📖 답변 펼치기':'📕 답변 접기';ob.onclick=()=>qaToggleAns(p.id);
-  [pb,eb,db,ob].forEach(b=>b.style.cssText='padding:6px 10px;font-size:13px');
-  row.append(pb,ob,eb,db);card.append(row);box.append(card);
+  [pb,pq,pa,eb,db,ob].forEach(b=>b.style.cssText='padding:6px 10px;font-size:13px');
+  row.append(pb,pq,pa,ob,eb,db);card.append(row);box.append(card);
  });
  qaUpdBtn();qaUpdTr();qaUpdAns();
 }
@@ -1107,10 +1118,12 @@ $('qaplayall').onclick=()=>{
  vis.forEach((p,i)=>{
   const card=blocks[i];
   if($('qaq').checked)items.push(...qaItemsOf(card&&card._qb,p.q));
-  if(!(qaHide.has(p.id)&&$('qaskiph').checked))items.push(...qaItemsOf(card&&card._ab,p.a));
+  if($('qaa').checked&&!(qaHide.has(p.id)&&$('qaskiph').checked))items.push(...qaItemsOf(card&&card._ab,p.a));
  });
+ if(!items.length){$('qamsg').textContent='읽을 내용이 없어요. 질문 읽기·답변 읽기 중 하나는 켜주세요.';return}
  qaPlayList(items,'all');
 };
+[['addx'],['qaadd2']].forEach(([i])=>{$(i).onclick=()=>{const b=$(i+'body'),h=b.classList.toggle('hide');$(i).textContent=h?'▼ 펼치기':'▲ 접기'}});
 $('qtadd').onclick=()=>{const n=$('qtname').value.trim();if(!n)return;const t={id:qaUid(),name:n};qa.topics.push(t);qaCur=t.id;$('qtname').value='';qaSave();renderQA()};
 $('qtren').onclick=()=>{
  if(qaCur==='all'){$('qtmsg').textContent='"전체"는 이름을 바꿀 수 없어요.';return}
