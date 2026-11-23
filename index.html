@@ -1028,7 +1028,7 @@ function renderQTopics(){
  mk('all','전체',qa.pairs.length);
  qa.topics.forEach(t=>mk(t.id,t.name,qa.pairs.filter(p=>p.t===t.id).length));
 }
-function renderQA(){
+function renderQAList(){
  ensureQA();renderQTopics();qaBtns.clear();
  const box=$('qalist');box.innerHTML='';
  const vis=qa.pairs.filter(p=>qaCur==='all'||p.t===qaCur);
@@ -1126,7 +1126,7 @@ $('qatrtoggle').onclick=()=>{
 };
 $('qatrall').onclick=qaTranslateAll;
 /* --- 랜덤 질문 연습 (선택한 주제에서 무작위로, 다 돌 때까지 중복 없이) --- */
-let qrBag=[],qrBagKey='',qrCur=null,qrQB=null,qrAB=null,qrQT='';
+let qrBag=[],qrBagKey='',qrCur=null,qrQB=null,qrAB=null,qrQT='',qrQP=null;
 function qaRandNext(){
  const vis=qa.pairs.filter(p=>(qaCur==='all'||p.t===qaCur)&&p.q&&p.q.trim());
  if(!vis.length){$('qamsg').textContent='이 주제에는 들을 질문이 없어요.';return}
@@ -1138,9 +1138,9 @@ function qaRandNext(){
  const nid=qrBag.shift();
  const p=vis.find(x=>x.id===nid);
  qrCur=p;
- const qpool=[p.q,...(p.x||[]).map(x=>x.q)].filter(t=>t&&t.trim());
- qrQT=qpool[Math.floor(Math.random()*qpool.length)];
- qrQB=qaBlock('Q.',qrQT);qrAB=null;
+ const qpool=[p,...(p.x||[])].filter(o=>o.q&&o.q.trim());
+ qrQP=qpool[Math.floor(Math.random()*qpool.length)];qrQT=qrQP.q;
+ qrQB=qaBlock('Q.',qrQT,{pair:qrQP,field:'q',key:qrQP.id+':q'});qrAB=null;
  $('qrq').innerHTML='';$('qrq').append(qrQB);$('qrq').classList.toggle('hide',$('qrhide').checked);
  $('qra').innerHTML='';$('qra').classList.add('hide');$('qrplaya').classList.add('hide');$('qrans').textContent='👀 답변 보기';
  const tn=qaCur==='all'?'전체':((qa.topics.find(t=>t.id===qaCur)||{}).name||'');
@@ -1148,6 +1148,12 @@ function qaRandNext(){
  $('qarand').classList.remove('hide');
  qaPlayList(qaItemsOf(qrQB,qrQT,'q'),'rand');
 }
+function qrRefresh(){
+ if(!qrCur||!qrQP||!qa.pairs.includes(qrCur))return;
+ qrQB=qaBlock('Q.',qrQT,{pair:qrQP,field:'q',key:qrQP.id+':q'});$('qrq').innerHTML='';$('qrq').append(qrQB);
+ if(qrAB){qrAB=qaBlock('A.',qrCur.a,{pair:qrCur,field:'a',key:qrCur.id+':a'});$('qra').innerHTML='';$('qra').append(qrAB)}
+}
+function renderQA(){renderQAList();try{qrRefresh()}catch(e){}}
 $('qarandom').onclick=qaRandNext;
 $('qrnext').onclick=qaRandNext;
 $('qrplay').onclick=()=>{
@@ -1159,7 +1165,7 @@ $('qrans').onclick=()=>{
  if(!qrCur)return;
  const open=!$('qra').classList.contains('hide');
  if(open){$('qra').classList.add('hide');$('qrplaya').classList.add('hide');$('qrans').textContent='👀 답변 보기';return}
- if(!qrAB){qrAB=qaBlock('A.',qrCur.a);$('qra').innerHTML='';$('qra').append(qrAB)}
+ if(!qrAB){qrAB=qaBlock('A.',qrCur.a,{pair:qrCur,field:'a',key:qrCur.id+':a'});$('qra').innerHTML='';$('qra').append(qrAB)}
  $('qra').classList.remove('hide');$('qrplaya').classList.remove('hide');$('qrans').textContent='🙈 답변 숨기기';
 };
 $('qrplaya').onclick=()=>{
