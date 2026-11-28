@@ -145,6 +145,8 @@ textarea,input,select{font-size:16px}
   <textarea id="mnew" style="min-height:40px;margin-top:8px" placeholder="메모 (선택) — 예: 강조할 점, 키워드, 주의사항"></textarea>
   <textarea id="qnew" style="min-height:60px;margin-top:8px" placeholder="질문 (예: Tell me about your favorite place to relax.)"></textarea>
   <textarea id="qknew" style="min-height:40px;margin-top:8px" placeholder="질문 한글 번역 (선택, 비워두면 번역 버튼을 누를 때 AI가 만들어요)"></textarea>
+  <div id="xnewbox"></div>
+  <button class="sec" id="xnewadd" style="margin-top:8px;padding:6px 10px;font-size:13px">+ 질문 추가 (같은 답변에 질문 더 연결)</button>
   <textarea id="anew" style="min-height:240px;margin-top:8px" placeholder="답변"></textarea>
   <textarea id="aknew" style="min-height:60px;margin-top:8px" placeholder="답변 한글 번역 (선택, 비워두면 번역 버튼을 누를 때 AI가 만들어요)"></textarea>
   <div class="row"><button id="qaadd">저장</button></div>
@@ -1220,11 +1222,26 @@ armBtn($('qtdel'),()=>{
  const t=qa.topics.find(x=>x.id===qaCur),to=qa.topics.find(x=>x.id!==qaCur),n=qa.pairs.filter(p=>p.t===qaCur).length;
  $('qtmsg').textContent='"'+t.name+'" 주제를 삭제할까요? 안의 질문·답변 '+n+'개는 지워지지 않고 "'+to.name+'"'+ro(to.name)+' 옮겨져요. 4초 안에 한 번 더 누르면 삭제돼요.';
 },()=>{$('qtmsg').textContent=''});
+const nxs=[];
+const nxRenum=()=>nxs.forEach((r,i)=>{r.h.textContent='질문 '+(i+2)});
+$('xnewadd').onclick=()=>{
+ const w=document.createElement('div');w.style.cssText='margin-top:8px;padding:6px;border:1px dashed var(--mu);border-radius:8px';
+ const h=document.createElement('div');h.className='hint';h.style.fontWeight='600';
+ const xq=document.createElement('textarea');xq.style.cssText='min-height:60px;margin-top:6px';xq.placeholder='추가 질문';
+ const xk=document.createElement('textarea');xk.style.cssText='min-height:40px;margin-top:6px';xk.placeholder='추가 질문 한글 번역 (선택, 비워두면 번역 버튼을 누를 때 AI가 만들어요)';
+ const rm=document.createElement('button');rm.className='sec';rm.textContent='✕ 이 질문 빼기';rm.style.cssText='margin-top:6px;padding:4px 10px;font-size:13px';
+ const rec={q:xq,qk:xk,h};
+ rm.onclick=()=>{const i=nxs.indexOf(rec);if(i>=0)nxs.splice(i,1);w.remove();nxRenum()};
+ w.append(h,xq,xk,rm);$('xnewbox').append(w);nxs.push(rec);nxRenum();xq.focus();
+};
 $('qaadd').onclick=()=>{
  const q=$('qnew').value.trim(),a=$('anew').value.trim(),qk=$('qknew').value.trim(),ak=$('aknew').value.trim();
  if(!q&&!a){$('qaaddmsg').textContent='질문이나 답변을 입력해주세요.';return}
- qa.pairs.push({id:qaUid(),t:qaCur==='all'?qa.topics[0].id:qaCur,memo:$('mnew').value.trim(),q,a,qk:q?qk:'',ak:a?ak:''});
- $('mnew').value='';$('qnew').value='';$('anew').value='';$('qknew').value='';$('aknew').value='';$('qaaddmsg').textContent='저장했어요.';qaSave();renderQA();
+ const nx=nxs.map(r=>({id:qaUid(),q:r.q.value.trim(),qk:r.qk.value.trim()})).filter(x=>x.q);
+ const np={id:qaUid(),t:qaCur==='all'?qa.topics[0].id:qaCur,memo:$('mnew').value.trim(),q,a,qk:q?qk:'',ak:a?ak:''};
+ if(nx.length)np.x=nx;
+ qa.pairs.push(np);
+ $('mnew').value='';$('qnew').value='';$('anew').value='';$('qknew').value='';$('aknew').value='';$('xnewbox').innerHTML='';nxs.length=0;$('qaaddmsg').textContent='저장했어요.';qaSave();renderQA();
 };
 const saveCfgQ=()=>{qaGeminiDown=0;try{localStorage.setItem('opic_cfg',JSON.stringify(cfg))}catch(e){}};
 $('ttsengine').onchange=()=>{cfg.ttsEngine=$('ttsengine').value;saveCfgQ()};
