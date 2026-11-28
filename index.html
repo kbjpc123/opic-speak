@@ -17,6 +17,10 @@ h1{font-size:20px;margin:4px 0 12px}
 .card{background:var(--card);border:1px solid var(--bd);border-radius:16px;padding:16px;margin-bottom:12px}
 textarea{width:100%;min-height:110px;border:1px solid var(--bd);border-radius:10px;padding:10px;font:inherit;background:var(--bg);color:var(--tx);resize:none}
 .grip{height:20px;display:flex;align-items:center;justify-content:center;cursor:ns-resize;touch-action:none;user-select:none}
+.qdrag{display:flex;justify-content:flex-end;margin:-4px -4px 4px}
+.qdrag span{padding:4px 10px;border-radius:8px;font-size:13px;color:var(--mu);cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none;border:1px solid var(--bd)}
+.card.qdragging{position:relative;z-index:20;opacity:.9;box-shadow:0 8px 24px rgba(0,0,0,.25)}
+.qdrop{height:4px;border-radius:2px;background:var(--mu);margin:-6px 0 6px}
 .grip i{width:44px;height:4px;border-radius:2px;background:var(--mu);opacity:.45}
 button{font:inherit;border:0;border-radius:12px;padding:12px 16px;background:var(--ac);color:#fff;font-weight:600;cursor:pointer}
 button.sec{background:transparent;color:var(--tx);border:1px solid var(--bd)}
@@ -1112,9 +1116,51 @@ function renderQAList(){
   armBtn(db,()=>{qa.pairs=qa.pairs.filter(x=>x.id!==p.id);qaSave();renderQA()});
   const ob=document.createElement('button');ob.className='sec';ob.textContent=hid?'📖 답변 펼치기':'📕 답변 접기';ob.onclick=()=>qaToggleAns(p.id);
   [pb,pq,...px,pa,eb,db,ob].forEach(b=>b.style.cssText='padding:6px 10px;font-size:13px');
-  row.append(pb,pq,...px,pa,ob,eb,db);card.append(row);box.append(card);
+  row.append(pb,pq,...px,pa,ob,eb,db);card.append(row);
+   card._pid=p.id;
+   if(qaCur!=='all'&&vis.length>1){const dh=document.createElement('div');dh.className='qdrag';const dg=document.createElement('span');dg.textContent='☰ 끌어서 순서 바꾸기';dg.title='끌어서 순서 바꾸기';dh.append(dg);card.prepend(dh);qaDragInit(dg,card,box,vis)}
+   box.append(card);
  });
  qaUpdBtn();qaUpdTr();qaUpdAns();
+}
+function qaDragInit(g,card,box,vis){
+ g.addEventListener('pointerdown',e=>{
+  e.preventDefault();
+  const cards=[...box.children].filter(c=>c._pid);
+  const others=cards.filter(c=>c!==card);
+  const y0=e.clientY,sy0=window.scrollY;let cy=y0,idx=others.indexOf(card),drop=null,raf=0;
+  try{g.setPointerCapture(e.pointerId)}catch(x){}
+  card.classList.add('qdragging');
+  const calc=()=>{
+   card.style.transform='translateY('+((cy-y0)+(window.scrollY-sy0))+'px)';
+   let n=0;others.forEach(c=>{const r=c.getBoundingClientRect();if(r.top+r.height/2<cy)n++});
+   idx=n;
+   if(!drop){drop=document.createElement('div');drop.className='qdrop'}
+   if(idx<others.length)box.insertBefore(drop,others[idx]);else others[others.length-1].after(drop);
+  };
+  const tick=()=>{
+   const h=window.innerHeight;
+   if(cy<70)window.scrollBy(0,-Math.ceil((70-cy)/5));else if(cy>h-70)window.scrollBy(0,Math.ceil((cy-(h-70))/5));
+   calc();raf=requestAnimationFrame(tick);
+  };
+  const mv=ev=>{cy=ev.clientY};
+  const done=ok=>{
+   cancelAnimationFrame(raf);g.removeEventListener('pointermove',mv);g.removeEventListener('pointerup',up);g.removeEventListener('pointercancel',cc);
+   card.classList.remove('qdragging');card.style.transform='';if(drop)drop.remove();
+   if(!ok)return;
+   const order=others.map(c=>c._pid);order.splice(idx,0,card._pid);
+   const cur=cards.map(c=>c._pid);
+   if(order.join('|')===cur.join('|'))return;
+   const slots=[];qa.pairs.forEach((q,i)=>{if(vis.includes(q))slots.push(i)});
+   if(slots.length!==order.length){renderQA();return}
+   const byId=new Map(vis.map(q=>[q.id,q]));
+   order.forEach((id,k)=>{qa.pairs[slots[k]]=byId.get(id)});
+   qaSave();renderQA();
+  };
+  const up=()=>done(true),cc=()=>done(false);
+  g.addEventListener('pointermove',mv);g.addEventListener('pointerup',up);g.addEventListener('pointercancel',cc);
+  calc();raf=requestAnimationFrame(tick);
+ });
 }
 function qaUpdAns(){
  const vis=qa.pairs.filter(p=>qaCur==='all'||p.t===qaCur);
