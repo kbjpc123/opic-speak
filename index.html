@@ -1958,10 +1958,21 @@ renderQA();
 /* --- 텍스트 상자 높이 조절 손잡이 (폰·PC 공통) --- */
 function addGrip(t){
  if(t._grip||!t.parentNode)return;
- const g=document.createElement('div');g.className='grip';g.title='끌어서 높이 조절';g.innerHTML='<i></i>';
+ const g=document.createElement('div');g.className='grip';g.title='끌어서 높이 조절 · 두 번 누르면 내용에 맞춤';g.innerHTML='<i></i>';
  t.after(g);t._grip=g;
  g.addEventListener('pointerdown',e=>{
   e.preventDefault();
+   const now=Date.now();
+   if(now-(g._lt||0)<350){
+    g._lt=0;
+    const keep=t.style.height,keepMin=t.style.minHeight;
+    t.style.minHeight='0px';t.style.height='auto';
+    const need=t.scrollHeight+(t.offsetHeight-t.clientHeight);
+    t.style.minHeight=keepMin;t.style.height=keep;
+    if(need>t.offsetHeight){t.style.minHeight=need+'px';t.style.height=need+'px'}
+    return;
+   }
+   g._lt=now;
   const y0=e.clientY,h0=t.offsetHeight;
   try{g.setPointerCapture(e.pointerId)}catch(x){}
   const mv=ev=>{const h=Math.max(40,Math.min(h0+ev.clientY-y0,window.innerHeight*0.85));t.style.minHeight=h+'px';t.style.height=h+'px'};
