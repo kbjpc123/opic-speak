@@ -245,7 +245,7 @@ textarea,input,select{font-size:16px}
 const $=id=>document.getElementById(id);
 const hesc=t=>t.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 const hl=(en,t)=>{const i=en.indexOf(t);return i<0?hesc(en):hesc(en.slice(0,i))+'<span class="hl">'+hesc(t)+'</span>'+hesc(en.slice(i+t.length))};
-let words=[],cats=[],curCat='',pool=[],docRef=null,lastJson='',rev=0;
+let words=[],cats=[],curCat='all',pool=[],docRef=null,lastJson='',rev=0;
 const uid=()=>Math.random().toString(36).slice(2,9);
 try{const o=JSON.parse(localStorage.getItem('opic_store')||'null');if(o){words=o.words||[];cats=o.cats||[];rev=o.rev||0}else{words=JSON.parse(localStorage.getItem('opic_words')||'[]')}}catch(e){}
 function ensure(){
